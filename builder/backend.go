@@ -30,6 +30,18 @@ type ValidatorData struct {
 	Timestamp    uint64             `json:"timestamp"`
 }
 
+type BuilderPayloadAttributes struct {
+	Timestamp             uint64             `json:"timestamp"`
+	Random                boostTypes.Hash    `json:"prevRandao"`
+	SuggestedFeeRecipient boostTypes.Address `json:"suggestedFeeRecipient"`
+	GasLimit              uint64             `json:"gasLimit"`
+}
+
+type RelayBlock struct {
+	Block  *beacon.ExecutableDataV1 `json:"block"`
+	Profit *hexutil.Big           `json:"profit"`
+}
+
 type IBeaconClient interface {
 	isValidator(pubkey PubkeyHex) bool
 	getProposerForNextSlot(requestedSlot uint64) (PubkeyHex, error)
@@ -328,6 +340,87 @@ func (b *Backend) handleGetPayload(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func (b *Backend) handlePayloadAttributes(w http.ResponseWriter, req *http.Request) {
+	payloadAttributes := new(beacon.PayloadAttributesV1)
+	if err := json.NewDecoder(req.Body).Decode(&payloadAttributes); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid payload attributes")
+		return
+	}
+
+	pubkeyHex, err := b.beaconClient.onForkchoiceUpdate()
+	if err != nil {
+		return
+	}
+
+	b.validatorsLock.RLock()
+	vd, found := b.validators[pubkeyHex]
+	if found {
+		payloadAttributes.SuggestedFeeRecipient = [20]byte(vd.FeeRecipient)
+		payloadAttributes.GasLimit = vd.GasLimit
+	}
+	b.validatorsLock.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(payloadAttributes); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+}
+
+func (b *Backend) handleSubmitBlock(w http.ResponseWriter, req *http.Request) {
+	relayBlock := new(RelayBlock)
+	if err := json.NewDecoder(req.Body).Decode(&relayBlock); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid relay block")
+		return
+	}
+
+	pubkeyHex, err := b.beaconClient.onForkchoiceUpdate()
+	if err != nil {
+		return
+	}
+
+	b.validatorsLock.RLock()
+	vd, found := b.validators[pubkeyHex]
+	if found {
+		feeRecipient := relayBlock.Block.FeeRecipient
+		gasLimit := relayBlock.Block.GasLimit
+		b.validatorsLock.RUnlock()
+
+		if (feeRecipient != [20]byte(vd.FeeRecipient)) {
+			log.Error("block fee recipient mismatch", "expected", vd.FeeRecipient, "received", relayBlock.Block.FeeRecipient)
+			respondError(w, http.StatusBadRequest, "fee recipient mismatch")
+			return
+		}
+		if (gasLimit != vd.GasLimit) {
+			log.Error("block gas limit mismatch", "expected", vd.GasLimit, "received", relayBlock.Block.GasLimit)
+			respondError(w, http.StatusBadRequest, "gas limit mismatch")
+			return
+		}
+	} else {
+		log.Error("missing validator", "validators", b.validators, "found", pubkeyHex)
+		b.validatorsLock.RUnlock()
+		respondError(w, http.StatusBadRequest, "unknown validator")
+		return
+	}
+	
+	payload := executableDataToExecutionPayload(relayBlock.Block)
+	payloadHeader, err := payloadToPayloadHeader(payload, relayBlock.Block)
+	if err != nil {
+		log.Error("could not convert payload to header", "err", err)
+		return
+	}
+
+	b.bestDataLock.Lock()
+	profit := relayBlock.Profit.ToInt()
+	if (profit.Cmp(b.profit) == 1) {
+		b.bestHeader = payloadHeader
+		b.bestPayload = payload
+		b.profit = new(big.Int).Set(profit)
+	}
+	b.bestDataLock.Unlock()
+}
+
 func (b *Backend) onForkchoice(payloadAttributes *beacon.PayloadAttributesV1) {
 	dataJson, err := json.Marshal(payloadAttributes)
 	if err == nil {
@@ -355,6 +448,7 @@ func (b *Backend) newSealedBlock(data *beacon.ExecutableDataV1, block *types.Blo
 	if err == nil {
 		log.Info("newSealedBlock", "data", string(dataJson))
 	}
+	
 	payload := executableDataToExecutionPayload(data)
 	payloadHeader, err := payloadToPayloadHeader(payload, data)
 	if err != nil {

@@ -22,6 +22,8 @@ const (
 	_PathRegisterValidator = "/eth/v1/builder/validators"
 	_PathGetHeader         = "/eth/v1/builder/header/{slot:[0-9]+}/{parent_hash:0x[a-fA-F0-9]+}/{pubkey:0x[a-fA-F0-9]+}"
 	_PathGetPayload        = "/eth/v1/builder/blinded_blocks"
+	_PathPayloadAttributes = "/eth/v1/relay/payload_attributes"
+	_PathSubmitBlock       = "/eth/v1/relay/submit_block"
 )
 
 type Service struct {
@@ -42,6 +44,8 @@ func getRouter(backend *Backend) http.Handler {
 	router.HandleFunc(_PathRegisterValidator, backend.handleRegisterValidator).Methods(http.MethodPost)
 	router.HandleFunc(_PathGetHeader, backend.handleGetHeader).Methods(http.MethodGet)
 	router.HandleFunc(_PathGetPayload, backend.handleGetPayload).Methods(http.MethodPost)
+	router.HandleFunc(_PathPayloadAttributes, backend.handlePayloadAttributes).Methods(http.MethodPost)
+	router.HandleFunc(_PathSubmitBlock, backend.handleSubmitBlock).Methods(http.MethodPost)
 
 	// Add logging and return router
 	loggedRouter := httplogger.LoggingMiddleware(router)
