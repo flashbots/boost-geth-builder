@@ -39,7 +39,7 @@ type BuilderPayloadAttributes struct {
 
 type RelayBlock struct {
 	Block  *beacon.ExecutableDataV1 `json:"block"`
-	Profit *hexutil.Big           `json:"profit"`
+	Profit *hexutil.Big             `json:"profit"`
 }
 
 type IBeaconClient interface {
@@ -349,19 +349,27 @@ func (b *Backend) handlePayloadAttributes(w http.ResponseWriter, req *http.Reque
 
 	pubkeyHex, err := b.beaconClient.onForkchoiceUpdate()
 	if err != nil {
+		respondError(w, http.StatusInternalServerError, "internal server error")
 		return
+	}
+
+	builderPayloadAttributes := &BuilderPayloadAttributes{
+		Timestamp:             payloadAttributes.Timestamp,
+		Random:                boostTypes.Hash(payloadAttributes.Random),
+		SuggestedFeeRecipient: boostTypes.Address(payloadAttributes.SuggestedFeeRecipient),
+		GasLimit:              payloadAttributes.GasLimit,
 	}
 
 	b.validatorsLock.RLock()
 	vd, found := b.validators[pubkeyHex]
 	if found {
-		payloadAttributes.SuggestedFeeRecipient = [20]byte(vd.FeeRecipient)
-		payloadAttributes.GasLimit = vd.GasLimit
+		builderPayloadAttributes.SuggestedFeeRecipient = vd.FeeRecipient
+		builderPayloadAttributes.GasLimit = vd.GasLimit
 	}
 	b.validatorsLock.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(payloadAttributes); err != nil {
+	if err := json.NewEncoder(w).Encode(builderPayloadAttributes); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		respondError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -377,6 +385,7 @@ func (b *Backend) handleSubmitBlock(w http.ResponseWriter, req *http.Request) {
 
 	pubkeyHex, err := b.beaconClient.onForkchoiceUpdate()
 	if err != nil {
+		respondError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -387,12 +396,12 @@ func (b *Backend) handleSubmitBlock(w http.ResponseWriter, req *http.Request) {
 		gasLimit := relayBlock.Block.GasLimit
 		b.validatorsLock.RUnlock()
 
-		if (feeRecipient != [20]byte(vd.FeeRecipient)) {
+		if feeRecipient != [20]byte(vd.FeeRecipient) {
 			log.Error("block fee recipient mismatch", "expected", vd.FeeRecipient, "received", relayBlock.Block.FeeRecipient)
 			respondError(w, http.StatusBadRequest, "fee recipient mismatch")
 			return
 		}
-		if (gasLimit != vd.GasLimit) {
+		if gasLimit != vd.GasLimit {
 			log.Error("block gas limit mismatch", "expected", vd.GasLimit, "received", relayBlock.Block.GasLimit)
 			respondError(w, http.StatusBadRequest, "gas limit mismatch")
 			return
@@ -403,7 +412,7 @@ func (b *Backend) handleSubmitBlock(w http.ResponseWriter, req *http.Request) {
 		respondError(w, http.StatusBadRequest, "unknown validator")
 		return
 	}
-	
+
 	payload := executableDataToExecutionPayload(relayBlock.Block)
 	payloadHeader, err := payloadToPayloadHeader(payload, relayBlock.Block)
 	if err != nil {
@@ -413,11 +422,9 @@ func (b *Backend) handleSubmitBlock(w http.ResponseWriter, req *http.Request) {
 
 	b.bestDataLock.Lock()
 	profit := relayBlock.Profit.ToInt()
-	if (profit.Cmp(b.profit) == 1) {
-		b.bestHeader = payloadHeader
-		b.bestPayload = payload
-		b.profit = new(big.Int).Set(profit)
-	}
+	b.bestHeader = payloadHeader
+	b.bestPayload = payload
+	b.profit = new(big.Int).Set(profit)
 	b.bestDataLock.Unlock()
 }
 
@@ -448,7 +455,7 @@ func (b *Backend) newSealedBlock(data *beacon.ExecutableDataV1, block *types.Blo
 	if err == nil {
 		log.Info("newSealedBlock", "data", string(dataJson))
 	}
-	
+
 	payload := executableDataToExecutionPayload(data)
 	payloadHeader, err := payloadToPayloadHeader(payload, data)
 	if err != nil {

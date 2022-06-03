@@ -232,3 +232,62 @@ func TestGetPayload(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, bid.Data.Message.Header.BlockHash, getPayloadResponse.Data.BlockHash)
 }
+
+func TestPayloadAttributes(t *testing.T) {
+	backend, validator := newTestBackend(t)
+
+	payloadAttributes := &beacon.PayloadAttributesV1{
+		SuggestedFeeRecipient: common.Address{0x01},
+		GasLimit:              15_000_000,
+		Timestamp:             uint64(time.Now().Unix()),
+		Random:                common.HexToHash("0xafafafa"),
+	}
+
+	registerValidator(t, validator, backend)
+
+	rr := testRequest(t, backend, "POST", "/eth/v1/relay/payload_attributes", payloadAttributes)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	payloadAttributeResponse := new(BuilderPayloadAttributes)
+	err := json.Unmarshal(rr.Body.Bytes(), payloadAttributeResponse)
+	require.NoError(t, err)
+	validatorData := backend.validators[PubkeyHex(validator.Pk.String())]
+	require.Equal(t, validatorData.FeeRecipient, payloadAttributeResponse.SuggestedFeeRecipient)
+	require.Equal(t, validatorData.GasLimit, payloadAttributeResponse.GasLimit)
+}
+
+func TestSubmitBlock(t *testing.T) {
+	backend, validator := newTestBackend(t)
+	registerValidator(t, validator, backend)
+
+	validatorData := backend.validators[PubkeyHex(validator.Pk.String())]
+
+	forkchoiceData := &beacon.ExecutableDataV1{
+		ParentHash:    common.HexToHash("0xafafafa"),
+		FeeRecipient:  common.Address(validatorData.FeeRecipient),
+		BlockHash:     common.HexToHash("0xbfbfbfb"),
+		BaseFeePerGas: big.NewInt(12),
+		ExtraData:     []byte{},
+		LogsBloom:     []byte{0x00, 0x05, 0x10},
+		Transactions:  [][]byte{},
+		GasLimit:      validatorData.GasLimit,
+	}
+
+	relayBlock := RelayBlock{
+		Block:  forkchoiceData,
+		Profit: (*hexutil.Big)(big.NewInt(10)),
+	}
+
+	rr := testRequest(t, backend, "POST", "/eth/v1/relay/submit_block", relayBlock)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	path := fmt.Sprintf("/eth/v1/builder/header/%d/%s/%s", 0, forkchoiceData.ParentHash.Hex(), validator.Pk.String())
+	rr = testRequest(t, backend, "GET", path, nil)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	bid := new(boostTypes.GetHeaderResponse)
+	err := json.Unmarshal(rr.Body.Bytes(), bid)
+	require.NoError(t, err)
+	require.Equal(t, relayBlock.Block.BlockHash, common.Hash(bid.Data.Message.Header.BlockHash))
+}
