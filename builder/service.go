@@ -106,7 +106,5 @@ func Register(stack *node.Node, backend *eth.Ethereum, cfg *BuilderConfig) error
 	builderService := NewService(cfg.ListenAddr, builderBackend)
 	builderService.Start()
 
-	backend.SetSealedBlockHook(builderBackend.newSealedBlock)
-	backend.SetForkchoiceHook(builderBackend.onForkchoice)
 	return nil
 }
