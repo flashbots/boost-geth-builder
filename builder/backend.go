@@ -394,7 +394,6 @@ func (b *Backend) handleSubmitBlock(w http.ResponseWriter, req *http.Request) {
 	if found {
 		feeRecipient := relayBlock.Block.FeeRecipient
 		gasLimit := relayBlock.Block.GasLimit
-		b.validatorsLock.RUnlock()
 
 		if feeRecipient != [20]byte(vd.FeeRecipient) {
 			log.Error("block fee recipient mismatch", "expected", vd.FeeRecipient, "received", relayBlock.Block.FeeRecipient)
@@ -406,13 +405,9 @@ func (b *Backend) handleSubmitBlock(w http.ResponseWriter, req *http.Request) {
 			respondError(w, http.StatusBadRequest, "gas limit mismatch")
 			return
 		}
-	} else {
-		log.Error("missing validator", "validators", b.validators, "found", pubkeyHex)
-		b.validatorsLock.RUnlock()
-		respondError(w, http.StatusBadRequest, "unknown validator")
-		return
 	}
-
+	b.validatorsLock.RUnlock()
+	
 	payload := executableDataToExecutionPayload(relayBlock.Block)
 	payloadHeader, err := payloadToPayloadHeader(payload, relayBlock.Block)
 	if err != nil {
