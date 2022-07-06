@@ -172,6 +172,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		BellatrixForkVersion:  ctx.GlobalString(utils.BuilderBellatrixForkVersion.Name),
 		GenesisValidatorsRoot: ctx.GlobalString(utils.BuilderGenesisValidatorsRoot.Name),
 		BeaconEndpoint:        ctx.GlobalString(utils.BuilderBeaconEndpoint.Name),
+		RemoteRelayEndpoint:   ctx.GlobalString(utils.BuilderRemoteRelayEndpoint.Name),
 	}
 	backend, eth := utils.RegisterEthService(stack, &cfg.Eth, bpConfig)
 	// Warn users to migrate if they have a legacy freezer format.

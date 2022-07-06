@@ -8,8 +8,8 @@ import (
 	"net/http"
 	_ "os"
 	"strconv"
+	"strings"
 	"sync"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/beacon"
@@ -24,6 +24,7 @@ import (
 type PubkeyHex string
 
 type ValidatorData struct {
+	Pubkey       PubkeyHex
 	FeeRecipient boostTypes.Address `json:"feeRecipient"`
 	GasLimit     uint64             `json:"gasLimit"`
 	Timestamp    uint64             `json:"timestamp"`
@@ -32,11 +33,18 @@ type ValidatorData struct {
 type IBeaconClient interface {
 	isValidator(pubkey PubkeyHex) bool
 	getProposerForNextSlot(requestedSlot uint64) (PubkeyHex, error)
-	onForkchoiceUpdate() (PubkeyHex, error)
+	onForkchoiceUpdate() (uint64, error)
+}
+
+type IRelay interface {
+	GetValidatorForSlot(nextSlot uint64) (ValidatorData, error)
+	GetValidatorsStats() string
+	handleRegisterValidator(w http.ResponseWriter, req *http.Request)
 }
 
 type Backend struct {
 	beaconClient IBeaconClient
+	relay        IRelay
 
 	builderSecretKey            *bls.SecretKey
 	builderPublicKey            boostTypes.PublicKey
@@ -45,9 +53,6 @@ type Backend struct {
 	builderSigningDomain        boostTypes.Domain
 	proposerSigningDomain       boostTypes.Domain
 	enableBeaconChecks          bool
-
-	validatorsLock sync.RWMutex
-	validators     map[PubkeyHex]ValidatorData
 
 	bestDataLock sync.Mutex
 	bestHeader   *boostTypes.ExecutionPayloadHeader
@@ -63,7 +68,7 @@ type ForkData struct {
 	GenesisValidatorsRoot string
 }
 
-func NewBackend(sk *bls.SecretKey, bc IBeaconClient, fd ForkData, builderSigningDomain boostTypes.Domain, proposerSigningDomain boostTypes.Domain, enableBeaconChecks bool) *Backend {
+func NewBackend(sk *bls.SecretKey, bc IBeaconClient, relay IRelay, fd ForkData, builderSigningDomain boostTypes.Domain, proposerSigningDomain boostTypes.Domain, enableBeaconChecks bool) *Backend {
 	pkBytes := bls.PublicKeyFromSecretKey(sk).Compress()
 	pk := boostTypes.PublicKey{}
 	pk.FromSlice(pkBytes)
@@ -80,6 +85,7 @@ func NewBackend(sk *bls.SecretKey, bc IBeaconClient, fd ForkData, builderSigning
 	}
 	return &Backend{
 		beaconClient:                bc,
+		relay:                       relay,
 		builderSecretKey:            sk,
 		builderPublicKey:            pk,
 		serializedBuilderPoolPubkey: pkBytes,
@@ -88,7 +94,6 @@ func NewBackend(sk *bls.SecretKey, bc IBeaconClient, fd ForkData, builderSigning
 		builderSigningDomain:  builderSigningDomain,
 		proposerSigningDomain: proposerSigningDomain,
 		enableBeaconChecks:    enableBeaconChecks,
-		validators:            make(map[PubkeyHex]ValidatorData),
 		indexTemplate:         indexTemplate,
 	}
 }
@@ -98,9 +103,7 @@ func (b *Backend) handleIndex(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "not available", http.StatusInternalServerError)
 	}
 
-	b.validatorsLock.RLock()
-	noValidators := len(b.validators)
-	b.validatorsLock.RUnlock()
+	validatorsStats := b.relay.GetValidatorsStats()
 
 	header := b.bestHeader
 	headerData, err := json.MarshalIndent(header, "", "  ")
@@ -116,7 +119,7 @@ func (b *Backend) handleIndex(w http.ResponseWriter, req *http.Request) {
 
 	statusData := struct {
 		Pubkey                string
-		NoValidators          int
+		ValidatorsStats       string
 		GenesisForkVersion    string
 		BellatrixForkVersion  string
 		GenesisValidatorsRoot string
@@ -124,7 +127,7 @@ func (b *Backend) handleIndex(w http.ResponseWriter, req *http.Request) {
 		ProposerSigningDomain string
 		Header                string
 		Blocks                string
-	}{hexutil.Encode(b.serializedBuilderPoolPubkey), noValidators, b.fd.GenesisForkVersion, b.fd.BellatrixForkVersion, b.fd.GenesisValidatorsRoot, hexutil.Encode(b.builderSigningDomain[:]), hexutil.Encode(b.proposerSigningDomain[:]), string(headerData), string(payloadData)}
+	}{hexutil.Encode(b.serializedBuilderPoolPubkey), validatorsStats, b.fd.GenesisForkVersion, b.fd.BellatrixForkVersion, b.fd.GenesisValidatorsRoot, hexutil.Encode(b.builderSigningDomain[:]), hexutil.Encode(b.proposerSigningDomain[:]), string(headerData), string(payloadData)}
 
 	if err := b.indexTemplate.Execute(w, statusData); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -148,79 +151,6 @@ func respondError(w http.ResponseWriter, code int, message string) {
 	}
 }
 
-func (b *Backend) handleRegisterValidator(w http.ResponseWriter, req *http.Request) {
-	payload := []boostTypes.SignedValidatorRegistration{}
-	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
-		log.Error("could not decode payload", "err", err)
-		respondError(w, http.StatusBadRequest, "invalid payload")
-		return
-	}
-
-	for _, registerRequest := range payload {
-		if len(registerRequest.Message.Pubkey) != 48 {
-			respondError(w, http.StatusBadRequest, "invalid pubkey")
-			return
-		}
-
-		if len(registerRequest.Signature) != 96 {
-			respondError(w, http.StatusBadRequest, "invalid signature")
-			return
-		}
-
-		ok, err := boostTypes.VerifySignature(registerRequest.Message, b.builderSigningDomain, registerRequest.Message.Pubkey[:], registerRequest.Signature[:])
-		if !ok || err != nil {
-			log.Error("error verifying signature", "err", err)
-			respondError(w, http.StatusBadRequest, "invalid signature")
-			return
-		}
-
-		// Do not check timestamp before signature, as it would leak validator data
-		if registerRequest.Message.Timestamp > uint64(time.Now().Add(10*time.Second).Unix()) {
-			respondError(w, http.StatusBadRequest, "invalid payload")
-			return
-		}
-	}
-
-	for _, registerRequest := range payload {
-		pubkeyHex := PubkeyHex(registerRequest.Message.Pubkey.String())
-		if !b.beaconClient.isValidator(pubkeyHex) {
-			respondError(w, http.StatusBadRequest, "not a validator")
-			return
-		}
-	}
-
-	b.validatorsLock.Lock()
-	defer b.validatorsLock.Unlock()
-
-	for _, registerRequest := range payload {
-		pubkeyHex := PubkeyHex(registerRequest.Message.Pubkey.String())
-		if previousValidatorData, ok := b.validators[pubkeyHex]; ok {
-			if registerRequest.Message.Timestamp < previousValidatorData.Timestamp {
-				respondError(w, http.StatusBadRequest, "invalid timestamp")
-				return
-			}
-
-			if registerRequest.Message.Timestamp == previousValidatorData.Timestamp && (registerRequest.Message.FeeRecipient != previousValidatorData.FeeRecipient || registerRequest.Message.GasLimit != previousValidatorData.GasLimit) {
-				respondError(w, http.StatusBadRequest, "invalid timestamp")
-				return
-			}
-		}
-	}
-
-	for _, registerRequest := range payload {
-		pubkeyHex := PubkeyHex(registerRequest.Message.Pubkey.String())
-		b.validators[pubkeyHex] = ValidatorData{
-			FeeRecipient: registerRequest.Message.FeeRecipient,
-			GasLimit:     registerRequest.Message.GasLimit,
-			Timestamp:    registerRequest.Message.Timestamp,
-		}
-
-		log.Info("registered validator", "pubkey", pubkeyHex, "data", b.validators[pubkeyHex])
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
 func (b *Backend) handleGetHeader(w http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	slot, err := strconv.Atoi(vars["slot"])
@@ -229,16 +159,7 @@ func (b *Backend) handleGetHeader(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	parentHashHex := vars["parent_hash"]
-	pubkeyHex := PubkeyHex(vars["pubkey"])
-
-	b.validatorsLock.RLock()
-	if _, ok := b.validators[pubkeyHex]; !ok {
-		log.Error("missing validator", "validators", b.validators, "provided", pubkeyHex)
-		b.validatorsLock.RUnlock()
-		respondError(w, http.StatusBadRequest, "unknown validator")
-		return
-	}
-	b.validatorsLock.RUnlock()
+	pubkeyHex := PubkeyHex(strings.ToLower(vars["pubkey"]))
 
 	// Do not validate slot separately, it will create a race between slot update and proposer key
 	if nextSlotProposer, err := b.beaconClient.getProposerForNextSlot(uint64(slot)); err != nil || nextSlotProposer != pubkeyHex {
@@ -247,6 +168,17 @@ func (b *Backend) handleGetHeader(w http.ResponseWriter, req *http.Request) {
 			respondError(w, http.StatusBadRequest, "unknown validator")
 			return
 		}
+	}
+
+	// Only check if slot is within a couple of the expected one, otherwise will force validators resync
+	vd, err := b.relay.GetValidatorForSlot(uint64(slot))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "unknown validator")
+		return
+	}
+	if vd.Pubkey != pubkeyHex {
+		respondError(w, http.StatusBadRequest, "unknown validator")
+		return
 	}
 
 	b.bestDataLock.Lock()
@@ -352,19 +284,16 @@ func (b *Backend) onForkchoice(payloadAttributes *beacon.PayloadAttributesV1) {
 		log.Info("FCU", "data", string(dataJson))
 	}
 	// if payloadAttributes.SuggestedFeeRecipient == common.Address{}
-	pubkeyHex, err := b.beaconClient.onForkchoiceUpdate()
+	nextSlot, err := b.beaconClient.onForkchoiceUpdate()
 	if err != nil {
 		return
 	}
 
 	if payloadAttributes != nil {
-		b.validatorsLock.RLock()
-		vd, found := b.validators[pubkeyHex]
-		if found {
+		if vd, err := b.relay.GetValidatorForSlot(nextSlot); err == nil {
 			payloadAttributes.SuggestedFeeRecipient = [20]byte(vd.FeeRecipient)
 			payloadAttributes.GasLimit = vd.GasLimit
 		}
-		b.validatorsLock.RUnlock()
 	}
 }
 

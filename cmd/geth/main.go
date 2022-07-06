@@ -162,6 +162,7 @@ var (
 		utils.BuilderBellatrixForkVersion,
 		utils.BuilderGenesisValidatorsRoot,
 		utils.BuilderBeaconEndpoint,
+		utils.BuilderRemoteRelayEndpoint,
 	}
 
 	rpcFlags = []cli.Flag{

@@ -199,6 +199,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.BuilderBellatrixForkVersion,
 			utils.BuilderGenesisValidatorsRoot,
 			utils.BuilderBeaconEndpoint,
+			utils.BuilderRemoteRelayEndpoint,
 		},
 	},
 	{

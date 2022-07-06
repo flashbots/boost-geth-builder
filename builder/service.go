@@ -39,7 +39,7 @@ func getRouter(backend *Backend) http.Handler {
 	// Add routes
 	router.HandleFunc("/", backend.handleIndex).Methods(http.MethodGet)
 	router.HandleFunc(_PathStatus, backend.handleStatus).Methods(http.MethodGet)
-	router.HandleFunc(_PathRegisterValidator, backend.handleRegisterValidator).Methods(http.MethodPost)
+	router.HandleFunc(_PathRegisterValidator, backend.relay.handleRegisterValidator).Methods(http.MethodPost)
 	router.HandleFunc(_PathGetHeader, backend.handleGetHeader).Methods(http.MethodGet)
 	router.HandleFunc(_PathGetPayload, backend.handleGetPayload).Methods(http.MethodPost)
 
@@ -71,6 +71,7 @@ type BuilderConfig struct {
 	BellatrixForkVersion  string
 	GenesisValidatorsRoot string
 	BeaconEndpoint        string
+	RemoteRelayEndpoint   string
 }
 
 func Register(stack *node.Node, backend *eth.Ethereum, cfg *BuilderConfig) error {
@@ -98,7 +99,19 @@ func Register(stack *node.Node, backend *eth.Ethereum, cfg *BuilderConfig) error
 	var beaconClient IBeaconClient
 	beaconClient = NewBeaconClient(cfg.BeaconEndpoint)
 
-	builderBackend := NewBackend(sk, beaconClient, ForkData{cfg.GenesisForkVersion, cfg.BellatrixForkVersion, cfg.GenesisValidatorsRoot}, builderSigningDomain, proposerSigningDomain, cfg.EnableValidatorChecks)
+	localRelay := NewLocalRelay(beaconClient, builderSigningDomain)
+
+	var relay IRelay
+	if cfg.RemoteRelayEndpoint != "" {
+		relay, err = NewRemoteRelay(cfg.RemoteRelayEndpoint, localRelay)
+		if err != nil {
+			return err
+		}
+	} else {
+		relay = localRelay
+	}
+
+	builderBackend := NewBackend(sk, beaconClient, relay, ForkData{cfg.GenesisForkVersion, cfg.BellatrixForkVersion, cfg.GenesisValidatorsRoot}, builderSigningDomain, proposerSigningDomain, cfg.EnableValidatorChecks)
 	builderService := NewService(cfg.ListenAddr, builderBackend)
 	builderService.Start()
 

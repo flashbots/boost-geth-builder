@@ -608,6 +608,12 @@ var (
 		EnvVar: "BUILDER_BEACON_ENDPOINT",
 		Value:  "http://127.0.0.1:5052",
 	}
+	BuilderRemoteRelayEndpoint = cli.StringFlag{
+		Name:   "builder.remote_relay_endpoint",
+		Usage:  "Relay endpoint to connect to for validator registration data, if not provided will expose validator registration locally",
+		EnvVar: "BUILDER_REMOTE_RELAY_ENDPOINT",
+		Value:  "",
+	}
 	// RPC settings
 	IPCDisabledFlag = cli.BoolFlag{
 		Name:  "ipcdisable",
