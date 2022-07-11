@@ -164,10 +164,8 @@ func (b *Backend) handleGetHeader(w http.ResponseWriter, req *http.Request) {
 	// Do not validate slot separately, it will create a race between slot update and proposer key
 	if nextSlotProposer, err := b.beaconClient.getProposerForNextSlot(uint64(slot)); err != nil || nextSlotProposer != pubkeyHex {
 		log.Error("getHeader requested for public key other than next slots proposer", "requested", pubkeyHex, "expected", nextSlotProposer)
-		if b.enableBeaconChecks {
-			respondError(w, http.StatusBadRequest, "unknown validator")
-			return
-		}
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 
 	// Only check if slot is within a couple of the expected one, otherwise will force validators resync
@@ -208,6 +206,7 @@ func (b *Backend) handleGetHeader(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		respondError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -255,6 +254,8 @@ func (b *Backend) handleGetPayload(w http.ResponseWriter, req *http.Request) {
 	bestPayload := b.bestPayload
 	b.bestDataLock.Unlock()
 
+	log.Info("Received blinded block", "payload", payload, "bestHeader", bestHeader)
+
 	if bestHeader == nil || bestPayload == nil {
 		respondError(w, http.StatusInternalServerError, "no payloads")
 		return
@@ -271,6 +272,7 @@ func (b *Backend) handleGetPayload(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		respondError(w, http.StatusInternalServerError, "internal server error")

@@ -132,7 +132,7 @@ func (r *LocalRelay) GetValidatorForSlot(nextSlot uint64) (ValidatorData, error)
 		return vd, nil
 	}
 	r.validatorsLock.RUnlock()
-	log.Error("missing validator", "validators", r.validators, "provided", pubkeyHex)
+	log.Info("no local entry for validator", "validator", pubkeyHex)
 	return ValidatorData{}, errors.New("missing validator")
 }
 
