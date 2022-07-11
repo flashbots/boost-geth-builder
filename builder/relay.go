@@ -185,6 +185,7 @@ type GetValidatorRelayResponse []struct {
 func (r *RemoteRelay) updateValidatorsMap(currentSlot uint64, retries int) error {
 	r.validatorsLock.Lock()
 	if r.validatorSyncOngoing {
+		r.validatorsLock.Unlock()
 		return errors.New("sync is ongoing")
 	}
 	r.validatorSyncOngoing = true
@@ -196,13 +197,16 @@ func (r *RemoteRelay) updateValidatorsMap(currentSlot uint64, retries int) error
 		newMap, err = r.getSlotValidatorMapFromRelay()
 		retries -= 1
 	}
-	if err != nil {
-		return err
-	}
 	r.validatorsLock.Lock()
-	r.validatorSlotMap = newMap
-	r.lastRequestedSlot = currentSlot
+	r.validatorSyncOngoing = false
+	if err == nil {
+		r.validatorSlotMap = newMap
+		r.lastRequestedSlot = currentSlot
+	}
 	r.validatorsLock.Unlock()
+
+	log.Info("Updated validators", "new", newMap, "for slot", currentSlot)
+
 	return nil
 }
 
