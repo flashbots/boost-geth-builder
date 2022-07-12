@@ -194,6 +194,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		Flags: []cli.Flag{
 			utils.BuilderEnableValidatorChecks,
 			utils.BuilderSecretKey,
+			utils.BuilderRelaySecretKey,
 			utils.BuilderListenAddr,
 			utils.BuilderGenesisForkVersion,
 			utils.BuilderBellatrixForkVersion,
