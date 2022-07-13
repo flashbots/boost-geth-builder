@@ -37,7 +37,6 @@ type RemoteRelay struct {
 
 	validatorsLock       sync.RWMutex
 	validatorSyncOngoing bool
-	currentSlot          uint64
 	lastRequestedSlot    uint64
 	validatorSlotMap     map[uint64]ValidatorData
 }
@@ -48,7 +47,6 @@ func NewRemoteRelay(endpoint string, localRelay *LocalRelay) (*RemoteRelay, erro
 		client:               http.Client{Timeout: time.Second},
 		localRelay:           localRelay,
 		validatorSyncOngoing: false,
-		currentSlot:          0,
 		lastRequestedSlot:    0,
 		validatorSlotMap:     make(map[uint64]ValidatorData),
 	}
@@ -103,9 +101,6 @@ func (r *RemoteRelay) GetValidatorForSlot(nextSlot uint64) (ValidatorData, error
 	// if not sanitized it will force resync of validator data and possibly is a DoS vector
 
 	r.validatorsLock.RLock()
-	defer r.validatorsLock.RUnlock()
-
-	r.currentSlot = nextSlot
 	if r.lastRequestedSlot == 0 || nextSlot/32 > r.lastRequestedSlot/32 {
 		// Every epoch request validators map
 		go func() {
@@ -116,6 +111,9 @@ func (r *RemoteRelay) GetValidatorForSlot(nextSlot uint64) (ValidatorData, error
 		}()
 	}
 
+	vd, found := r.validatorSlotMap[nextSlot]
+	r.validatorsLock.RUnlock()
+
 	if r.localRelay != nil {
 		localValidator, err := r.localRelay.GetValidatorForSlot(nextSlot)
 		if err == nil {
@@ -124,7 +122,6 @@ func (r *RemoteRelay) GetValidatorForSlot(nextSlot uint64) (ValidatorData, error
 		}
 	}
 
-	vd, found := r.validatorSlotMap[nextSlot]
 	if found {
 		return vd, nil
 	}
@@ -156,6 +153,8 @@ func (r *RemoteRelay) SubmitBlock(msg *BuilderSubmitBlockRequest) error {
 	if code > 299 {
 		return fmt.Errorf("non-ok response code %d from relay ", code)
 	}
+
+	log.Info("submitted block", "msg", msg)
 
 	if r.localRelay != nil {
 		r.localRelay.SubmitBlock(msg)

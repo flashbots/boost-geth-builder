@@ -74,9 +74,8 @@ func (b *Builder) onForkchoice(payloadAttributes *beacon.PayloadAttributesV1) {
 		return
 	}
 
-	payloadAttributes.Slot = nextSlot
-
 	if payloadAttributes != nil {
+		payloadAttributes.Slot = nextSlot
 		if vd, err := b.relay.GetValidatorForSlot(nextSlot); err == nil {
 			payloadAttributes.SuggestedFeeRecipient = [20]byte(vd.FeeRecipient)
 			payloadAttributes.GasLimit = vd.GasLimit
@@ -138,8 +137,8 @@ func payloadToPayloadHeader(p *boostTypes.ExecutionPayload) (*boostTypes.Executi
 	txs := boostTypes.Transactions{
 		Transactions: [][]byte{},
 	}
-	for i, tx := range p.Transactions {
-		txs.Transactions[i] = []byte(tx)
+	for _, tx := range p.Transactions {
+		txs.Transactions = append(txs.Transactions, []byte(tx))
 	}
 	txroot, err := txs.HashTreeRoot()
 	if err != nil {
