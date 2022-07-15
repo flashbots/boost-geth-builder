@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,8 +79,8 @@ func NewLocalRelay(sk *bls.SecretKey, beaconClient IBeaconClient, builderSigning
 	}
 }
 
-func (r *LocalRelay) SubmitBlock(msg *BuilderSubmitBlockRequest) error {
-	payloadHeader, err := payloadToPayloadHeader(&msg.ExecutionPayload)
+func (r *LocalRelay) SubmitBlock(msg *boostTypes.BuilderSubmitBlockRequest) error {
+	payloadHeader, err := boostTypes.PayloadToPayloadHeader(msg.ExecutionPayload)
 	if err != nil {
 		log.Error("could not convert payload to header", "err", err)
 		return err
@@ -87,7 +88,7 @@ func (r *LocalRelay) SubmitBlock(msg *BuilderSubmitBlockRequest) error {
 
 	r.bestDataLock.Lock()
 	r.bestHeader = payloadHeader
-	r.bestPayload = &msg.ExecutionPayload
+	r.bestPayload = msg.ExecutionPayload
 	r.profit = msg.Message.Value
 	r.bestDataLock.Unlock()
 
@@ -370,4 +371,8 @@ func respondError(w http.ResponseWriter, code int, message string) {
 
 func (r *LocalRelay) handleStatus(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+func ExecutionPayloadHeaderEqual(l *boostTypes.ExecutionPayloadHeader, r *boostTypes.ExecutionPayloadHeader) bool {
+	return l.ParentHash == r.ParentHash && l.FeeRecipient == r.FeeRecipient && l.StateRoot == r.StateRoot && l.ReceiptsRoot == r.ReceiptsRoot && l.LogsBloom == r.LogsBloom && l.Random == r.Random && l.BlockNumber == r.BlockNumber && l.GasLimit == r.GasLimit && l.GasUsed == r.GasUsed && l.Timestamp == r.Timestamp && l.BaseFeePerGas == r.BaseFeePerGas && bytes.Equal(l.ExtraData, r.ExtraData) && l.BlockHash == r.BlockHash && l.TransactionsRoot == r.TransactionsRoot
 }

@@ -16,6 +16,7 @@ import (
 
 type testBeaconClient struct {
 	validator *ValidatorPrivateData
+	slot      uint64
 }
 
 func (b *testBeaconClient) isValidator(pubkey PubkeyHex) bool {
@@ -25,7 +26,7 @@ func (b *testBeaconClient) getProposerForNextSlot(requestedSlot uint64) (PubkeyH
 	return PubkeyHex(hexutil.Encode(b.validator.Pk)), nil
 }
 func (b *testBeaconClient) onForkchoiceUpdate() (uint64, error) {
-	return 0, nil
+	return b.slot, nil
 }
 
 type BeaconClient struct {

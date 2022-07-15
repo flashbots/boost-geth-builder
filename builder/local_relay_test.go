@@ -26,7 +26,7 @@ func newTestBackend(t *testing.T) (*Builder, *LocalRelay, *ValidatorPrivateData)
 	bDomain := boostTypes.ComputeDomain(boostTypes.DomainTypeAppBuilder, [4]byte{0x02, 0x0, 0x0, 0x0}, boostTypes.Hash{})
 	genesisValidatorsRoot := boostTypes.Hash(common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"))
 	cDomain := boostTypes.ComputeDomain(boostTypes.DomainTypeBeaconProposer, [4]byte{0x02, 0x0, 0x0, 0x0}, genesisValidatorsRoot)
-	beaconClient := &testBeaconClient{validator}
+	beaconClient := &testBeaconClient{validator: validator}
 	localRelay := NewLocalRelay(sk, beaconClient, bDomain, cDomain, ForkData{}, true)
 	backend := NewBuilder(sk, beaconClient, localRelay, bDomain)
 	// service := NewService("127.0.0.1:31545", backend)
@@ -149,11 +149,16 @@ func TestGetHeader(t *testing.T) {
 	err := json.Unmarshal(rr.Body.Bytes(), bid)
 	require.NoError(t, err)
 
-	expectedHeader, err := payloadToPayloadHeader(executableDataToExecutionPayload(forkchoiceData))
+	executionPayload, err := executableDataToExecutionPayload(forkchoiceData)
+	require.NoError(t, err)
+	expectedHeader, err := boostTypes.PayloadToPayloadHeader(executionPayload)
+	require.NoError(t, err)
+	expectedValue := new(boostTypes.U256Str)
+	err = expectedValue.FromBig(forkchoiceBlock.Profit)
 	require.NoError(t, err)
 	require.EqualValues(t, &boostTypes.BuilderBid{
 		Header: expectedHeader,
-		Value:  *new(boostTypes.U256Str).FromBig(forkchoiceBlock.Profit),
+		Value:  *expectedValue,
 		Pubkey: backend.builderPublicKey,
 	}, bid.Data.Message)
 

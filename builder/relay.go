@@ -17,13 +17,17 @@ import (
 )
 
 type testRelay struct {
-	validator ValidatorData
+	validator     ValidatorData
+	requestedSlot uint64
+	submittedMsg  *boostTypes.BuilderSubmitBlockRequest
 }
 
-func (r *testRelay) SubmitBlock(msg *BuilderSubmitBlockRequest) error {
+func (r *testRelay) SubmitBlock(msg *boostTypes.BuilderSubmitBlockRequest) error {
+	r.submittedMsg = msg
 	return nil
 }
 func (r *testRelay) GetValidatorForSlot(nextSlot uint64) (ValidatorData, error) {
+	r.requestedSlot = nextSlot
 	return r.validator, nil
 }
 func (r *testRelay) handleRegisterValidator(w http.ResponseWriter, req *http.Request) {
@@ -69,6 +73,7 @@ type GetValidatorRelayResponse []struct {
 }
 
 func (r *RemoteRelay) updateValidatorsMap(currentSlot uint64, retries int) error {
+	log.Info("requesting ", "currentSlot", currentSlot)
 	r.validatorsLock.Lock()
 	if r.validatorSyncOngoing {
 		r.validatorsLock.Unlock()
@@ -145,7 +150,7 @@ type BuilderSubmitBlockRequest struct {
 	ExecutionPayload boostTypes.ExecutionPayload      `json:"execution_payload"`
 }
 
-func (r *RemoteRelay) SubmitBlock(msg *BuilderSubmitBlockRequest) error {
+func (r *RemoteRelay) SubmitBlock(msg *boostTypes.BuilderSubmitBlockRequest) error {
 	code, err := server.SendHTTPRequest(context.TODO(), *http.DefaultClient, http.MethodPost, r.endpoint+"/relay/v1/builder/blocks", msg, nil)
 	if err != nil {
 		return err

@@ -1,7 +1,6 @@
 package builder
 
 import (
-	"bytes"
 	"encoding/json"
 	_ "os"
 
@@ -30,7 +29,7 @@ type IBeaconClient interface {
 }
 
 type IRelay interface {
-	SubmitBlock(msg *BuilderSubmitBlockRequest) error
+	SubmitBlock(msg *boostTypes.BuilderSubmitBlockRequest) error
 	GetValidatorForSlot(nextSlot uint64) (ValidatorData, error)
 }
 
@@ -88,7 +87,11 @@ func (b *Builder) newSealedBlock(data *beacon.ExecutableDataV1, block *types.Blo
 	if err == nil {
 		log.Info("newSealedBlock", "data", string(dataJson))
 	}
-	payload := executableDataToExecutionPayload(data)
+	payload, err := executableDataToExecutionPayload(data)
+	if err != nil {
+		log.Error("could not format execution payload", "err", err)
+		return
+	}
 
 	vd, err := b.relay.GetValidatorForSlot(payloadAttributes.Slot)
 	if err != nil {
@@ -102,8 +105,14 @@ func (b *Builder) newSealedBlock(data *beacon.ExecutableDataV1, block *types.Blo
 		return
 	}
 
-	value := new(boostTypes.U256Str).FromBig(block.Profit)
-	blockBidMsg := BuilderSubmitBlockRequestMessage{
+	value := new(boostTypes.U256Str)
+	err = value.FromBig(block.Profit)
+	if err != nil {
+		log.Error("could not set block value", "err", err)
+		return
+	}
+
+	blockBidMsg := boostTypes.BidTraceMessage{
 		Slot:                 payloadAttributes.Slot,
 		ParentHash:           payload.ParentHash,
 		BlockHash:            payload.BlockHash,
@@ -113,17 +122,16 @@ func (b *Builder) newSealedBlock(data *beacon.ExecutableDataV1, block *types.Blo
 		Value:                *value,
 	}
 
-	/* signature, err := boostTypes.SignMessage(blockBidMsg, b.builderSigningDomain, b.builderSecretKey)
+	signature, err := boostTypes.SignMessage(&blockBidMsg, b.builderSigningDomain, b.builderSecretKey)
 	if err != nil {
 		log.Error("could not sign builder bid", "err", err)
 		return
-	} */
+	}
 
-	signature := boostTypes.Signature{}
-	blockSubmitReq := BuilderSubmitBlockRequest{
+	blockSubmitReq := boostTypes.BuilderSubmitBlockRequest{
 		Signature:        signature,
-		Message:          blockBidMsg,
-		ExecutionPayload: *payload,
+		Message:          &blockBidMsg,
+		ExecutionPayload: payload,
 	}
 
 	err = b.relay.SubmitBlock(&blockSubmitReq)
@@ -133,40 +141,16 @@ func (b *Builder) newSealedBlock(data *beacon.ExecutableDataV1, block *types.Blo
 	}
 }
 
-func payloadToPayloadHeader(p *boostTypes.ExecutionPayload) (*boostTypes.ExecutionPayloadHeader, error) {
-	txs := boostTypes.Transactions{
-		Transactions: [][]byte{},
-	}
-	for _, tx := range p.Transactions {
-		txs.Transactions = append(txs.Transactions, []byte(tx))
-	}
-	txroot, err := txs.HashTreeRoot()
-	if err != nil {
-		return nil, err
-	}
-
-	return &boostTypes.ExecutionPayloadHeader{
-		ParentHash:       p.ParentHash,
-		FeeRecipient:     p.FeeRecipient,
-		StateRoot:        p.StateRoot,
-		ReceiptsRoot:     p.ReceiptsRoot,
-		LogsBloom:        p.LogsBloom,
-		Random:           p.Random,
-		BlockNumber:      p.BlockNumber,
-		GasLimit:         p.GasLimit,
-		GasUsed:          p.GasUsed,
-		Timestamp:        p.Timestamp,
-		ExtraData:        boostTypes.ExtraData(p.ExtraData),
-		BaseFeePerGas:    p.BaseFeePerGas,
-		BlockHash:        p.BlockHash,
-		TransactionsRoot: [32]byte(txroot),
-	}, nil
-}
-
-func executableDataToExecutionPayload(data *beacon.ExecutableDataV1) *boostTypes.ExecutionPayload {
+func executableDataToExecutionPayload(data *beacon.ExecutableDataV1) (*boostTypes.ExecutionPayload, error) {
 	transactionData := make([]hexutil.Bytes, len(data.Transactions))
 	for i, tx := range data.Transactions {
 		transactionData[i] = hexutil.Bytes(tx)
+	}
+
+	baseFeePerGas := new(boostTypes.U256Str)
+	err := baseFeePerGas.FromBig(data.BaseFeePerGas)
+	if err != nil {
+		return nil, err
 	}
 
 	return &boostTypes.ExecutionPayload{
@@ -181,12 +165,8 @@ func executableDataToExecutionPayload(data *beacon.ExecutableDataV1) *boostTypes
 		GasUsed:       data.GasUsed,
 		Timestamp:     data.Timestamp,
 		ExtraData:     data.ExtraData,
-		BaseFeePerGas: *new(boostTypes.U256Str).FromBig(data.BaseFeePerGas),
+		BaseFeePerGas: *baseFeePerGas,
 		BlockHash:     [32]byte(data.BlockHash),
 		Transactions:  transactionData,
-	}
-}
-
-func ExecutionPayloadHeaderEqual(l *boostTypes.ExecutionPayloadHeader, r *boostTypes.ExecutionPayloadHeader) bool {
-	return l.ParentHash == r.ParentHash && l.FeeRecipient == r.FeeRecipient && l.StateRoot == r.StateRoot && l.ReceiptsRoot == r.ReceiptsRoot && l.LogsBloom == r.LogsBloom && l.Random == r.Random && l.BlockNumber == r.BlockNumber && l.GasLimit == r.GasLimit && l.GasUsed == r.GasUsed && l.Timestamp == r.Timestamp && l.BaseFeePerGas == r.BaseFeePerGas && bytes.Equal(l.ExtraData, r.ExtraData) && l.BlockHash == r.BlockHash && l.TransactionsRoot == r.TransactionsRoot
+	}, nil
 }
