@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,12 +59,12 @@ func NewRemoteRelay(endpoint string, localRelay *LocalRelay) (*RemoteRelay, erro
 }
 
 type GetValidatorRelayResponse []struct {
-	Slot  string `json:"slot"`
+	Slot  uint64 `json:"slot,string"`
 	Entry struct {
 		Message struct {
 			FeeRecipient string `json:"fee_recipient"`
-			GasLimit     string `json:"gas_limit"`
-			Timestamp    string `json:"timestamp"`
+			GasLimit     uint64 `json:"gas_limit,string"`
+			Timestamp    uint64 `json:"timestamp,string"`
 			Pubkey       string `json:"pubkey"`
 		} `json:"message"`
 		Signature string `json:"signature"`
@@ -73,7 +72,6 @@ type GetValidatorRelayResponse []struct {
 }
 
 func (r *RemoteRelay) updateValidatorsMap(currentSlot uint64, retries int) error {
-	log.Info("requesting ", "currentSlot", currentSlot)
 	r.validatorsLock.Lock()
 	if r.validatorSyncOngoing {
 		r.validatorsLock.Unlock()
@@ -82,18 +80,24 @@ func (r *RemoteRelay) updateValidatorsMap(currentSlot uint64, retries int) error
 	r.validatorSyncOngoing = true
 	r.validatorsLock.Unlock()
 
+	log.Info("requesting ", "currentSlot", currentSlot)
 	newMap, err := r.getSlotValidatorMapFromRelay()
 	for err != nil && retries > 0 {
+		log.Error("could not get validators map from relay, retrying", "err", err)
 		time.Sleep(time.Second)
 		newMap, err = r.getSlotValidatorMapFromRelay()
 		retries -= 1
 	}
 	r.validatorsLock.Lock()
 	r.validatorSyncOngoing = false
-	if err == nil {
-		r.validatorSlotMap = newMap
-		r.lastRequestedSlot = currentSlot
+	if err != nil {
+		r.validatorsLock.Unlock()
+		log.Error("could not get validators map from relay", "err", err)
+		return err
 	}
+
+	r.validatorSlotMap = newMap
+	r.lastRequestedSlot = currentSlot
 	r.validatorsLock.Unlock()
 
 	log.Info("Updated validators", "new", newMap, "for slot", currentSlot)
@@ -134,22 +138,6 @@ func (r *RemoteRelay) GetValidatorForSlot(nextSlot uint64) (ValidatorData, error
 	return ValidatorData{}, errors.New("validator not found")
 }
 
-type BuilderSubmitBlockRequestMessage struct {
-	Slot                 uint64               `json:"slot,string"`
-	ParentHash           boostTypes.Hash      `json:"parent_hash" ssz-size:"32"`
-	BlockHash            boostTypes.Hash      `json:"block_hash" ssz-size:"32"`
-	BuilderPubkey        boostTypes.PublicKey `json:"builder_pubkey" ssz-size:"48"`
-	ProposerPubkey       boostTypes.PublicKey `json:"proposer_pubkey" ssz-size:"48"`
-	ProposerFeeRecipient boostTypes.Address   `json:"proposer_fee_recipient" ssz-size:"32"`
-	Value                boostTypes.U256Str   `json:"value" ssz-size:"32"`
-}
-
-type BuilderSubmitBlockRequest struct {
-	Signature        boostTypes.Signature             `json:"signature"`
-	Message          BuilderSubmitBlockRequestMessage `json:"message"`
-	ExecutionPayload boostTypes.ExecutionPayload      `json:"execution_payload"`
-}
-
 func (r *RemoteRelay) SubmitBlock(msg *boostTypes.BuilderSubmitBlockRequest) error {
 	code, err := server.SendHTTPRequest(context.TODO(), *http.DefaultClient, http.MethodPost, r.endpoint+"/relay/v1/builder/blocks", msg, nil)
 	if err != nil {
@@ -181,21 +169,6 @@ func (r *RemoteRelay) getSlotValidatorMapFromRelay() (map[uint64]ValidatorData, 
 
 	res := make(map[uint64]ValidatorData)
 	for _, data := range dst {
-		slot, err := strconv.ParseUint(data.Slot, 10, 64)
-		if err != nil {
-			log.Error("Ill-formatted slot from relay", "data", data)
-			continue
-		}
-		gasLimit, err := strconv.ParseUint(data.Entry.Message.GasLimit, 10, 64)
-		if err != nil {
-			log.Error("Ill-formatted gas_limit from relay", "data", data)
-			continue
-		}
-		timestamp, err := strconv.ParseUint(data.Entry.Message.Timestamp, 10, 64)
-		if err != nil {
-			log.Error("Ill-formatted timestamp from relay", "data", data)
-			continue
-		}
 		feeRecipientBytes, err := hexutil.Decode(data.Entry.Message.FeeRecipient)
 		if err != nil {
 			log.Error("Ill-formatted fee_recipient from relay", "data", data)
@@ -206,11 +179,11 @@ func (r *RemoteRelay) getSlotValidatorMapFromRelay() (map[uint64]ValidatorData, 
 
 		pubkeyHex := PubkeyHex(strings.ToLower(data.Entry.Message.Pubkey))
 
-		res[slot] = ValidatorData{
+		res[data.Slot] = ValidatorData{
 			Pubkey:       pubkeyHex,
 			FeeRecipient: feeRecipient,
-			GasLimit:     gasLimit,
-			Timestamp:    timestamp,
+			GasLimit:     data.Entry.Message.GasLimit,
+			Timestamp:    data.Entry.Message.Timestamp,
 		}
 	}
 

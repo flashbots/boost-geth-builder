@@ -66,10 +66,14 @@ func (b *Builder) onForkchoice(payloadAttributes *beacon.PayloadAttributesV1) {
 	dataJson, err := json.Marshal(payloadAttributes)
 	if err == nil {
 		log.Info("FCU", "data", string(dataJson))
+	} else {
+		log.Info("FCU", "data", payloadAttributes, "parsingError", err)
+
 	}
 
 	nextSlot, err := b.beaconClient.onForkchoiceUpdate()
 	if err != nil {
+		log.Error("FCU hook failed", "err", err)
 		return
 	}
 
@@ -86,6 +90,8 @@ func (b *Builder) newSealedBlock(data *beacon.ExecutableDataV1, block *types.Blo
 	dataJson, err := json.Marshal(data)
 	if err == nil {
 		log.Info("newSealedBlock", "data", string(dataJson))
+	} else {
+		log.Info("newSealedBlock", "data", data, "parsingError", err)
 	}
 	payload, err := executableDataToExecutionPayload(data)
 	if err != nil {
