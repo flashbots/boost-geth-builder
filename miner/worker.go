@@ -1208,7 +1208,7 @@ func (w *worker) getSealingBlock(parent common.Hash, timestamp uint64, coinbase 
 			gasLimit:   gasLimit,
 			random:     random,
 			noUncle:    true,
-			noExtra:    true,
+			noExtra:    false,
 			noTxs:      noTxs,
 		},
 		result: resCh,
