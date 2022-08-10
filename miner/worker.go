@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -252,6 +255,19 @@ type worker struct {
 }
 
 func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool) *worker {
+	var err error
+	key := os.Getenv("BUILDER_TX_SIGNING_KEY") // get builder private signing key
+	if key == "" {
+		config.BuilderTxSigningKey, err = crypto.GenerateKey()
+		if err != nil {
+			log.Error("Error creating new tx signing key", "error", err)
+		}
+	} else {
+		config.BuilderTxSigningKey, err = crypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
+		if err != nil {
+			log.Error("Error creating tx signing key", "error", err)
+		}
+	}
 	worker := &worker{
 		config:             config,
 		chainConfig:        chainConfig,
@@ -847,10 +863,6 @@ func (w *worker) commitTransaction(env *environment, tx *types.Transaction) ([]*
 }
 
 func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByPriceAndNonce, interrupt *int32) error {
-	gasLimit := env.header.GasLimit
-	if env.gasPool == nil {
-		env.gasPool = new(core.GasPool).AddGas(gasLimit)
-	}
 	var coalescedLogs []*types.Log
 
 	for {
@@ -863,7 +875,7 @@ func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByP
 		if interrupt != nil && atomic.LoadInt32(interrupt) != commitInterruptNone {
 			// Notify resubmit loop to increase resubmitting interval due to too frequent commits.
 			if atomic.LoadInt32(interrupt) == commitInterruptResubmit {
-				ratio := float64(gasLimit-env.gasPool.Gas()) / float64(gasLimit)
+				ratio := float64(env.header.GasLimit-env.gasPool.Gas()) / float64(env.header.GasLimit)
 				if ratio < 0.1 {
 					ratio = 0.1
 				}
@@ -1062,7 +1074,7 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 // fillTransactions retrieves the pending transactions from the txpool and fills them
 // into the given sealing block. The transaction selection and ordering strategy can
 // be customized with the plugin in the future.
-func (w *worker) fillTransactions(interrupt *int32, env *environment) error {
+func (w *worker) fillTransactions(interrupt *int32, env *environment, validatorFeeRecipient *common.Address) error {
 	// Split the pending transactions into locals and remotes
 	// Fill the block with all available pending transactions.
 	pending := w.eth.TxPool().Pending(true)
@@ -1073,6 +1085,18 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment) error {
 			localTxs[account] = txs
 		}
 	}
+
+	if env.gasPool == nil {
+		env.gasPool = new(core.GasPool).AddGas(env.header.GasLimit)
+	}
+	var builderCoinbaseBalanceBefore *big.Int
+	if validatorFeeRecipient != nil {
+		builderCoinbaseBalanceBefore = env.state.GetBalance(w.coinbase)
+		if err := env.gasPool.SubGas(params.TxGas); err != nil {
+			return err
+		}
+	}
+
 	if len(localTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, localTxs, env.header.BaseFee)
 		if err := w.commitTransactions(env, txs, interrupt); err != nil {
@@ -1085,6 +1109,26 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment) error {
 			return err
 		}
 	}
+	if validatorFeeRecipient != nil && w.config.BuilderTxSigningKey != nil {
+		builderCoinbaseBalanceAfter := env.state.GetBalance(w.coinbase)
+		profit := new(big.Int).Sub(builderCoinbaseBalanceAfter, builderCoinbaseBalanceBefore)
+		env.gasPool.AddGas(params.TxGas)
+
+		tx, err := w.createTx(env, validatorFeeRecipient, profit)
+		if err != nil {
+			log.Debug("Create Transaction failed, validator payment skipped", "err", err)
+		}
+		if tx != nil {
+			log.Info("CreateTx succeeded, proceeding to commit tx")
+			_, err = w.commitTransaction(env, tx)
+			if err != nil {
+				log.Debug("Commit transaction failed, validator payment skipped", "hash", tx.Hash(), "err", err)
+			} else {
+				log.Info("CommitTransaction succeeded", "hash", tx.Hash())
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -1099,7 +1143,7 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 	coinbaseBalanceBefore := work.state.GetBalance(params.coinbase)
 
 	if !params.noTxs {
-		w.fillTransactions(nil, work)
+		w.fillTransactions(nil, work, &params.coinbase)
 	}
 	block, err := w.engine.FinalizeAndAssemble(w.chain, work.header, work.state, work.txs, work.unclelist(), work.receipts)
 	if err != nil {
@@ -1139,7 +1183,7 @@ func (w *worker) commitWork(interrupt *int32, noempty bool, timestamp int64) {
 	}
 
 	// Fill pending transactions from the txpool
-	err = w.fillTransactions(interrupt, work)
+	err = w.fillTransactions(interrupt, work, nil)
 	if errors.Is(err, errBlockInterruptedByNewHead) {
 		work.discard()
 		return
@@ -1255,4 +1299,22 @@ func totalFees(block *types.Block, receipts []*types.Receipt) *big.Float {
 		feesWei.Add(feesWei, new(big.Int).Mul(new(big.Int).SetUint64(receipts[i].GasUsed), minerFee))
 	}
 	return new(big.Float).Quo(new(big.Float).SetInt(feesWei), new(big.Float).SetInt(big.NewInt(params.Ether)))
+}
+
+func (w *worker) createTx(env *environment, recipient *common.Address, profit *big.Int) (*types.Transaction, error) {
+
+	fee := new(big.Int).Mul(big.NewInt(21000), env.header.BaseFee)
+	amount := new(big.Int).Sub(profit, fee)
+	chainId := w.chainConfig.ChainID
+	txData := &types.DynamicFeeTx{
+		ChainID:   w.chainConfig.ChainID,
+		Nonce:     env.state.GetNonce(w.coinbase),
+		GasTipCap: big.NewInt(0),
+		GasFeeCap: new(big.Int).Set(env.header.BaseFee),
+		Gas:       params.TxGas,
+		To:        recipient,
+		Value:     amount,
+	}
+
+	return types.SignNewTx(w.config.BuilderTxSigningKey, types.NewEIP155Signer(chainId), txData)
 }
