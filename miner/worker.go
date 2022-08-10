@@ -1316,5 +1316,5 @@ func (w *worker) createTx(env *environment, recipient *common.Address, profit *b
 		Value:     amount,
 	}
 
-	return types.SignNewTx(w.config.BuilderTxSigningKey, types.NewEIP155Signer(chainId), txData)
+	return types.SignNewTx(w.config.BuilderTxSigningKey, types.LatestSignerForChainID(chainId), txData)
 }
