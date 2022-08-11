@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -252,6 +253,16 @@ type worker struct {
 }
 
 func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool) *worker {
+	var err error
+	key := "" // get builder private signing key
+	if key == "" {
+		log.Error("Builder signing key is empty, validator payout can not be done")
+	} else {
+		config.BuilderTxSigningKey, err = crypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
+		if err != nil {
+			log.Error("Error creating builder tx signing key", "error", err)
+		}
+	}
 	worker := &worker{
 		config:             config,
 		chainConfig:        chainConfig,
@@ -1075,6 +1086,27 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment) error {
 			return err
 		}
 	}
+	if validatorFeeRecipient != nil && w.config.BuilderTxSigningKey != nil {
+		builderCoinbaseBalanceAfter := env.state.GetBalance(w.coinbase)
+		profit := new(big.Int).Sub(builderCoinbaseBalanceAfter, builderCoinbaseBalanceBefore)
+		env.gasPool.AddGas(params.TxGas)
+
+		tx, err := w.createProposerPayoutTx(env, validatorFeeRecipient, profit)
+		if err != nil {
+			log.Debug("Create Transaction failed, validator payment skipped", "err", err)
+		}
+		if tx != nil {
+			log.Info("CreateTx succeeded, proceeding to commit tx")
+			env.state.Prepare(tx.Hash(), env.tcount)
+			_, err = w.commitTransaction(env, tx)
+			if err != nil {
+				log.Debug("Commit transaction failed, validator payment skipped", "hash", tx.Hash(), "err", err)
+			} else {
+				log.Info("CommitTransaction succeeded", "hash", tx.Hash())
+			}
+			env.tcount++
+		}
+	}
 	return nil
 }
 
@@ -1245,4 +1277,35 @@ func totalFees(block *types.Block, receipts []*types.Receipt) *big.Float {
 		feesWei.Add(feesWei, new(big.Int).Mul(new(big.Int).SetUint64(receipts[i].GasUsed), minerFee))
 	}
 	return new(big.Float).Quo(new(big.Float).SetInt(feesWei), new(big.Float).SetInt(big.NewInt(params.Ether)))
+}
+
+func (w *worker) createProposerPayoutTx(env *environment, recipient *common.Address, profit *big.Int) (*types.Transaction, error) {
+	sender := w.coinbase.String()
+	log.Info(sender)
+	nonce := env.state.GetNonce(w.coinbase)
+	fee := new(big.Int).Mul(big.NewInt(21000), env.header.BaseFee)
+	amount := new(big.Int).Sub(profit, fee)
+	chainId := w.chainConfig.ChainID
+	//txData := &types.DynamicFeeTx{
+	//	ChainID:   w.chainConfig.ChainID,
+	//	Nonce:     nonce,
+	//	GasTipCap: big.NewInt(0),
+	//	GasFeeCap: new(big.Int).Set(env.header.BaseFee),
+	//	Gas:       params.TxGas,
+	//	To:        recipient,
+	//	Value:     amount,
+	//}
+	//txData := &types.LegacyTx{
+	//	Nonce:    nonce,
+	//	GasPrice: new(big.Int).Set(env.header.BaseFee),
+	//	Gas:      params.TxGas,
+	//	To:       recipient,
+	//	Value:    amount,
+	//}
+
+	//return types.MustSignNewTx(w.config.BuilderTxSigningKey, types.LatestSignerForChainID(chainId), txData)
+	//nonce uint64, to common.Address, amount *big.Int, gasLimit uint64, gasPrice *big.Int, data []byte
+
+	tx := types.NewTransaction(nonce, *recipient, amount, params.TxGas, new(big.Int).Set(env.header.BaseFee), nil)
+	return types.SignTx(tx, types.LatestSignerForChainID(chainId), w.config.BuilderTxSigningKey)
 }
