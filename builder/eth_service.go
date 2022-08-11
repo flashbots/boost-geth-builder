@@ -38,12 +38,6 @@ func NewEthereumService(eth *eth.Ethereum) *EthereumService {
 }
 
 func (s *EthereumService) BuildBlock(attrs *BuilderPayloadAttributes) *beacon.ExecutableDataV1 {
-	// Create an empty block first which can be used as a fallback
-	empty, err := s.eth.Miner().GetSealingBlockSync(attrs.HeadHash, uint64(attrs.Timestamp), attrs.SuggestedFeeRecipient, attrs.GasLimit, attrs.Random, true)
-	if err != nil {
-		log.Error("Failed to create empty sealing payload", "err", err)
-		return nil
-	}
 	// Send a request to generate a full block in the background.
 	// The result can be obtained via the returned channel.
 	resCh, err := s.eth.Miner().GetSealingBlockAsync(attrs.HeadHash, uint64(attrs.Timestamp), attrs.SuggestedFeeRecipient, attrs.GasLimit, attrs.Random, false)
@@ -52,7 +46,7 @@ func (s *EthereumService) BuildBlock(attrs *BuilderPayloadAttributes) *beacon.Ex
 		return nil
 	}
 
-	resultPayload := catalyst.NewPayload(empty, resCh)
+	resultPayload := catalyst.NewPayload(resCh)
 	executableData, _ := resultPayload.Resolve()
 	return executableData
 }

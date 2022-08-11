@@ -39,8 +39,8 @@ type Payload struct {
 	payload
 }
 
-func NewPayload(empty *types.Block, result chan *types.Block) *Payload {
-	return &Payload{payload{empty: empty, result: result}}
+func NewPayload(result chan *types.Block) *Payload {
+	return &Payload{payload{result: result}}
 }
 
 func (p *Payload) Resolve() (*beacon.ExecutableDataV1, *types.Block) {
