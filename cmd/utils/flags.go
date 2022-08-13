@@ -572,9 +572,17 @@ var (
 		Usage: "Geth will start up even if there are legacy receipts in freezer",
 	}
 	// Builder API settings
+	BuilderEnabled = cli.BoolFlag{
+		Name:  "builder",
+		Usage: "Enable the builder",
+	}
 	BuilderEnableValidatorChecks = cli.BoolFlag{
 		Name:  "builder.validator_checks",
 		Usage: "Enable the validator checks",
+	}
+	BuilderEnableLocalRelay = cli.BoolFlag{
+		Name:  "builder.local_relay",
+		Usage: "Enable the local relay",
 	}
 	BuilderSecretKey = cli.StringFlag{
 		Name:   "builder.secret_key",
@@ -1923,8 +1931,10 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, bpCfg *builder.
 		}
 	}
 
-	if err := builder.Register(stack, backend, bpCfg); err != nil {
-		Fatalf("Failed to register the builder service: %v", err)
+	if bpCfg.Enabled {
+		if err := builder.Register(stack, backend, bpCfg); err != nil {
+			Fatalf("Failed to register the builder service: %v", err)
+		}
 	}
 
 	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))

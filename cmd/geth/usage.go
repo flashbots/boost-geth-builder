@@ -192,7 +192,9 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 	{
 		Name: "BUILDER API",
 		Flags: []cli.Flag{
+			utils.BuilderEnabled,
 			utils.BuilderEnableValidatorChecks,
+			utils.BuilderEnableLocalRelay,
 			utils.BuilderSecretKey,
 			utils.BuilderRelaySecretKey,
 			utils.BuilderListenAddr,

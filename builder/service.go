@@ -65,8 +65,9 @@ func getRouter(localRelay *LocalRelay) http.Handler {
 }
 
 func NewService(listenAddr string, localRelay *LocalRelay, builder *Builder) *Service {
-	return &Service{
-		srv: &http.Server{
+	var srv *http.Server
+	if localRelay != nil {
+		srv = &http.Server{
 			Addr:    listenAddr,
 			Handler: getRouter(localRelay),
 			/*
@@ -75,13 +76,19 @@ func NewService(listenAddr string, localRelay *LocalRelay, builder *Builder) *Se
 			   WriteTimeout:
 			   IdleTimeout:
 			*/
-		},
+		}
+	}
+
+	return &Service{
+		srv:     srv,
 		builder: builder,
 	}
 }
 
 type BuilderConfig struct {
+	Enabled               bool
 	EnableValidatorChecks bool
+	EnableLocalRelay      bool
 	BuilderSecretKey      string
 	RelaySecretKey        string
 	ListenAddr            string
@@ -134,13 +141,18 @@ func Register(stack *node.Node, backend *eth.Ethereum, cfg *BuilderConfig) error
 
 	beaconClient := NewBeaconClient(cfg.BeaconEndpoint)
 
-	localRelay := NewLocalRelay(relaySk, beaconClient, builderSigningDomain, proposerSigningDomain, ForkData{cfg.GenesisForkVersion, cfg.BellatrixForkVersion, cfg.GenesisValidatorsRoot}, cfg.EnableValidatorChecks)
+	var localRelay *LocalRelay
+	if cfg.EnableLocalRelay {
+		localRelay = NewLocalRelay(relaySk, beaconClient, builderSigningDomain, proposerSigningDomain, ForkData{cfg.GenesisForkVersion, cfg.BellatrixForkVersion, cfg.GenesisValidatorsRoot}, cfg.EnableValidatorChecks)
+	}
 
 	var relay IRelay
 	if cfg.RemoteRelayEndpoint != "" {
 		relay = NewRemoteRelay(cfg.RemoteRelayEndpoint, localRelay)
-	} else {
+	} else if localRelay != nil {
 		relay = localRelay
+	} else {
+		return errors.New("neither local nor remote relay specified")
 	}
 
 	ethereumService := NewEthereumService(backend)
