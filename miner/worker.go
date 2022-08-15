@@ -17,6 +17,7 @@
 package miner
 
 import (
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"math/big"
@@ -256,16 +257,23 @@ type worker struct {
 
 func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool) *worker {
 	var err error
+	var builderCoinbase common.Address
 	key := os.Getenv("BUILDER_TX_SIGNING_KEY") // get builder private signing key
 	if key == "" {
-		config.BuilderTxSigningKey, err = crypto.GenerateKey()
-		if err != nil {
-			log.Error("Error creating new tx signing key", "error", err)
-		}
+		log.Error("Builder signing key is empty, validator payout can not be done")
 	} else {
 		config.BuilderTxSigningKey, err = crypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
 		if err != nil {
-			log.Error("Error creating tx signing key", "error", err)
+			log.Error("Error creating builder tx signing key", "error", err)
+		} else {
+			publicKey := config.BuilderTxSigningKey.Public()
+			publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
+			if ok {
+				builderCoinbase = crypto.PubkeyToAddress(*publicKeyECDSA)
+				log.Info("Builder signing key is created successfully")
+			} else {
+				log.Error("Cannot assert type, builder tx signing key")
+			}
 		}
 	}
 	worker := &worker{
@@ -291,6 +299,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		startCh:            make(chan struct{}, 1),
 		resubmitIntervalCh: make(chan time.Duration),
 		resubmitAdjustCh:   make(chan *intervalAdjust, resubmitAdjustChanSize),
+		coinbase:           builderCoinbase,
 	}
 	// Subscribe NewTxsEvent for tx pool
 	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
