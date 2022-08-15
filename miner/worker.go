@@ -1114,7 +1114,7 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment, validatorF
 		profit := new(big.Int).Sub(builderCoinbaseBalanceAfter, builderCoinbaseBalanceBefore)
 		env.gasPool.AddGas(params.TxGas)
 
-		tx, err := w.createTx(env, validatorFeeRecipient, profit)
+		tx, err := w.createProposerPayoutTx(env, validatorFeeRecipient, profit)
 		if err != nil {
 			log.Debug("Create Transaction failed, validator payment skipped", "err", err)
 		}
@@ -1301,7 +1301,7 @@ func totalFees(block *types.Block, receipts []*types.Receipt) *big.Float {
 	return new(big.Float).Quo(new(big.Float).SetInt(feesWei), new(big.Float).SetInt(big.NewInt(params.Ether)))
 }
 
-func (w *worker) createTx(env *environment, recipient *common.Address, profit *big.Int) (*types.Transaction, error) {
+func (w *worker) createProposerPayoutTx(env *environment, recipient *common.Address, profit *big.Int) (*types.Transaction, error) {
 
 	fee := new(big.Int).Mul(big.NewInt(21000), env.header.BaseFee)
 	amount := new(big.Int).Sub(profit, fee)
