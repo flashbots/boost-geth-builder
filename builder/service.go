@@ -41,8 +41,10 @@ type Service struct {
 }
 
 func (s *Service) Start() {
-	log.Info("Service started")
-	go s.srv.ListenAndServe()
+	if s.srv != nil {
+		log.Info("Service started")
+		go s.srv.ListenAndServe()
+	}
 }
 
 func (s *Service) PayloadAttributes(payloadAttributes *BuilderPayloadAttributes) error {
