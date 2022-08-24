@@ -276,6 +276,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 			}
 		}
 	}
+	log.Info("builderCoinbase", builderCoinbase.String())
 	worker := &worker{
 		config:             config,
 		chainConfig:        chainConfig,
@@ -1077,7 +1078,8 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 // fillTransactions retrieves the pending transactions from the txpool and fills them
 // into the given sealing block. The transaction selection and ordering strategy can
 // be customized with the plugin in the future.
-func (w *worker) fillTransactions(interrupt *int32, env *environment) error {
+
+func (w *worker) fillTransactions(interrupt *int32, env *environment, validatorCoinbase *common.Address) error {
 	// Split the pending transactions into locals and remotes
 	// Fill the block with all available pending transactions.
 	pending := w.eth.TxPool().Pending(true)
@@ -1100,32 +1102,41 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment) error {
 			return err
 		}
 	}
-	if validatorFeeRecipient != nil && w.config.BuilderTxSigningKey != nil {
+	if validatorCoinbase != nil && w.config.BuilderTxSigningKey != nil {
 		builderCoinbaseBalanceAfter := env.state.GetBalance(w.coinbase)
+		log.Info("Before creating validator profit", "validatorCoinbase", validatorCoinbase.String(), "builderCoinbase", w.coinbase.String(), "builderCoinbaseBalanceBefore", builderCoinbaseBalanceBefore.String(), "builderCoinbaseBalanceAfter", builderCoinbaseBalanceAfter.String())
+
 		profit := new(big.Int).Sub(builderCoinbaseBalanceAfter, builderCoinbaseBalanceBefore)
 		env.gasPool.AddGas(params.TxGas)
-
-		tx, err := w.createProposerPayoutTx(env, validatorFeeRecipient, profit)
-		if err != nil {
-			log.Debug("Create Transaction failed, validator payment skipped", "err", err)
-		}
-		if tx != nil {
-			log.Info("CreateTx succeeded, proceeding to commit tx")
-			env.state.Prepare(tx.Hash(), env.tcount)
-			_, err = w.commitTransaction(env, tx)
+		if profit.Sign() == 1 {
+			tx, err := w.createProposerPayoutTx(env, validatorCoinbase, profit)
 			if err != nil {
-				log.Debug("Commit transaction failed, validator payment skipped", "hash", tx.Hash(), "err", err)
-			} else {
-				log.Info("CommitTransaction succeeded", "hash", tx.Hash())
+				log.Debug("Create Transaction failed, validator payment skipped", "err", err)
 			}
-			env.tcount++
+			if tx != nil {
+				log.Info("CreateTx succeeded, proceeding to commit tx")
+				env.state.Prepare(tx.Hash(), env.tcount)
+				_, err = w.commitTransaction(env, tx)
+				if err != nil {
+					log.Debug("Commit transaction failed, validator payment skipped", "hash", tx.Hash().String(), "err", err)
+				} else {
+					log.Info("CommitTransaction succeeded", "hash", tx.Hash().String())
+				}
+				env.tcount++
+			}
+		} else {
+			log.Warn("Not enough balance, validator payment skipped", "profit", profit.String())
 		}
+
 	}
 	return nil
 }
 
 // generateWork generates a sealing block based on the given parameters.
 func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
+	validatorCoinbase := params.coinbase // set validator coinbase
+	params.coinbase = w.coinbase         // set builders coinbase
+
 	work, err := w.prepareWork(params)
 	if err != nil {
 		return nil, err
@@ -1135,7 +1146,9 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 	coinbaseBalanceBefore := work.state.GetBalance(params.coinbase)
 
 	if !params.noTxs {
-		w.fillTransactions(nil, work)
+		if err := w.fillTransactions(nil, work, &validatorCoinbase); err != nil {
+			return nil, err
+		}
 	}
 	block, err := w.engine.FinalizeAndAssemble(w.chain, work.header, work.state, work.txs, work.unclelist(), work.receipts)
 	if err != nil {
@@ -1175,7 +1188,7 @@ func (w *worker) commitWork(interrupt *int32, noempty bool, timestamp int64) {
 	}
 
 	// Fill pending transactions from the txpool
-	err = w.fillTransactions(interrupt, work)
+	err = w.fillTransactions(interrupt, work, nil)
 	if errors.Is(err, errBlockInterruptedByNewHead) {
 		work.discard()
 		return
