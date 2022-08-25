@@ -1111,16 +1111,16 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment, validatorC
 		if profit.Sign() == 1 {
 			tx, err := w.createProposerPayoutTx(env, validatorCoinbase, profit)
 			if err != nil {
-				log.Debug("Create Transaction failed, validator payment skipped", "err", err)
+				log.Error("Proposer payout create tx failed, validator payment skipped", "err", err)
 			}
 			if tx != nil {
-				log.Info("CreateTx succeeded, proceeding to commit tx")
+				log.Info("Proposer payout create tx succeeded, proceeding to commit tx")
 				env.state.Prepare(tx.Hash(), env.tcount)
 				_, err = w.commitTransaction(env, tx)
 				if err != nil {
-					log.Debug("Commit transaction failed, validator payment skipped", "hash", tx.Hash().String(), "err", err)
+					log.Error("Proposer payout commit tx failed, validator payment skipped", "hash", tx.Hash().String(), "err", err)
 				} else {
-					log.Info("CommitTransaction succeeded", "hash", tx.Hash().String())
+					log.Info("Proposer payout commit tx succeeded", "hash", tx.Hash().String())
 				}
 				env.tcount++
 			}
@@ -1134,8 +1134,9 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment, validatorC
 
 // generateWork generates a sealing block based on the given parameters.
 func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
-	validatorCoinbase := params.coinbase // set validator coinbase
-	params.coinbase = w.coinbase         // set builders coinbase
+	validatorCoinbase := params.coinbase
+	// Set builder coinbase to be passed to beacon header
+	params.coinbase = w.coinbase
 
 	work, err := w.prepareWork(params)
 	if err != nil {
@@ -1143,7 +1144,7 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 	}
 	defer work.discard()
 
-	coinbaseBalanceBefore := work.state.GetBalance(params.coinbase)
+	coinbaseBalanceBefore := work.state.GetBalance(validatorCoinbase)
 
 	if !params.noTxs {
 		if err := w.fillTransactions(nil, work, &validatorCoinbase); err != nil {
@@ -1155,8 +1156,10 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 		return nil, err
 	}
 
-	coinbaseBalanceAfter := work.state.GetBalance(params.coinbase)
+	coinbaseBalanceAfter := work.state.GetBalance(validatorCoinbase)
 	block.Profit = big.NewInt(0).Sub(coinbaseBalanceAfter, coinbaseBalanceBefore)
+	validatorBalance := work.state.GetBalance(validatorCoinbase)
+	log.Info("Block finalized and assembled", "blockProfit", block.Profit.String(), "validatorCoinbaseBalanceBefore", coinbaseBalanceBefore.String(), "validatorCoinbaseBalanceAfter", coinbaseBalanceAfter.String(), "builderCoinbase", params.coinbase.String(), "validatorCoinbase", validatorCoinbase.String(), "validatorBalance", validatorBalance.String())
 	return block, nil
 }
 
@@ -1313,26 +1316,7 @@ func (w *worker) createProposerPayoutTx(env *environment, recipient *common.Addr
 	fee := new(big.Int).Mul(big.NewInt(21000), env.header.BaseFee)
 	amount := new(big.Int).Sub(profit, fee)
 	chainId := w.chainConfig.ChainID
-	//txData := &types.DynamicFeeTx{
-	//	ChainID:   w.chainConfig.ChainID,
-	//	Nonce:     nonce,
-	//	GasTipCap: big.NewInt(0),
-	//	GasFeeCap: new(big.Int).Set(env.header.BaseFee),
-	//	Gas:       params.TxGas,
-	//	To:        recipient,
-	//	Value:     amount,
-	//}
-	//txData := &types.LegacyTx{
-	//	Nonce:    nonce,
-	//	GasPrice: new(big.Int).Set(env.header.BaseFee),
-	//	Gas:      params.TxGas,
-	//	To:       recipient,
-	//	Value:    amount,
-	//}
-
-	//return types.MustSignNewTx(w.config.BuilderTxSigningKey, types.LatestSignerForChainID(chainId), txData)
-	//nonce uint64, to common.Address, amount *big.Int, gasLimit uint64, gasPrice *big.Int, data []byte
-
-	tx := types.NewTransaction(nonce, *recipient, amount, params.TxGas, new(big.Int).Set(env.header.BaseFee), nil)
+	log.Debug("createProposerPayoutTx", "sender", sender, "chainId", chainId.String(), "nonce", nonce, "amount", amount.String(), "gas", params.TxGas, "baseFee", env.header.BaseFee.String(), "fee", fee)
+	tx := types.NewTransaction(nonce, *recipient, amount, params.TxGas, gasPrice, nil)
 	return types.SignTx(tx, types.LatestSignerForChainID(chainId), w.config.BuilderTxSigningKey)
 }
