@@ -1,8 +1,11 @@
 package builder
 
 import (
+	"context"
 	"errors"
 	_ "os"
+	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/beacon"
@@ -41,6 +44,7 @@ type Builder struct {
 	beaconClient IBeaconClient
 	relay        IRelay
 	eth          IEthereumService
+	resubmitter  Resubmitter
 
 	builderSecretKey     *bls.SecretKey
 	builderPublicKey     boostTypes.PublicKey
@@ -56,6 +60,7 @@ func NewBuilder(sk *bls.SecretKey, bc IBeaconClient, relay IRelay, builderSignin
 		beaconClient:     bc,
 		relay:            relay,
 		eth:              eth,
+		resubmitter:      Resubmitter{},
 		builderSecretKey: sk,
 		builderPublicKey: pk,
 
@@ -110,6 +115,41 @@ func (b *Builder) onSealedBlock(executableData *beacon.ExecutableDataV1, block *
 	return nil
 }
 
+type Resubmitter struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+}
+
+func (r *Resubmitter) newTask(repeatFor time.Duration, interval time.Duration, fn func() error) error {
+	repeatUntilCh := time.After(repeatFor)
+
+	r.mu.Lock()
+	if r.cancel != nil {
+		r.cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	r.mu.Unlock()
+
+	firstRunErr := fn()
+
+	go func() {
+		for ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-repeatUntilCh:
+				cancel()
+				return
+			case <-time.After(interval):
+				fn()
+			}
+		}
+	}()
+
+	return firstRunErr
+}
+
 func (b *Builder) OnPayloadAttribute(attrs *BuilderPayloadAttributes) error {
 	if attrs == nil {
 		return nil
@@ -140,13 +180,23 @@ func (b *Builder) OnPayloadAttribute(attrs *BuilderPayloadAttributes) error {
 		return errors.New("parent block not found in blocktree")
 	}
 
-	executableData, block := b.eth.BuildBlock(attrs)
-	if executableData == nil || block == nil {
-		log.Error("did not receive the payload")
-		return errors.New("could not build block")
-	}
+	firstBlockResult := b.resubmitter.newTask(12*time.Second, time.Second, func() error {
+		executableData, block := b.eth.BuildBlock(attrs)
+		if executableData == nil || block == nil {
+			log.Error("did not receive the payload")
+			return errors.New("did not receive the payload")
+		}
 
-	return b.onSealedBlock(executableData, block, proposerPubkey, vd.FeeRecipient, attrs.Slot)
+		err := b.onSealedBlock(executableData, block, proposerPubkey, vd.FeeRecipient, attrs.Slot)
+		if err != nil {
+			log.Error("could not run block hook", "err", err)
+			return err
+		}
+
+		return nil
+	})
+
+	return firstBlockResult
 }
 
 func executableDataToExecutionPayload(data *beacon.ExecutableDataV1) (*boostTypes.ExecutionPayload, error) {
