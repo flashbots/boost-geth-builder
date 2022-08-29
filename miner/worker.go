@@ -1090,6 +1090,16 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment, validatorC
 			localTxs[account] = txs
 		}
 	}
+	if env.gasPool == nil {
+		env.gasPool = new(core.GasPool).AddGas(env.header.GasLimit)
+	}
+	var builderCoinbaseBalanceBefore *big.Int
+	if validatorCoinbase != nil {
+		builderCoinbaseBalanceBefore = env.state.GetBalance(w.coinbase)
+		if err := env.gasPool.SubGas(params.TxGas); err != nil {
+			return err
+		}
+	}
 	if len(localTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, localTxs, env.header.BaseFee)
 		if err := w.commitTransactions(env, txs, interrupt); err != nil {
@@ -1315,6 +1325,7 @@ func (w *worker) createProposerPayoutTx(env *environment, recipient *common.Addr
 	nonce := env.state.GetNonce(w.coinbase)
 	fee := new(big.Int).Mul(big.NewInt(21000), env.header.BaseFee)
 	amount := new(big.Int).Sub(profit, fee)
+	gasPrice := new(big.Int).Set(env.header.BaseFee)
 	chainId := w.chainConfig.ChainID
 	log.Debug("createProposerPayoutTx", "sender", sender, "chainId", chainId.String(), "nonce", nonce, "amount", amount.String(), "gas", params.TxGas, "baseFee", env.header.BaseFee.String(), "fee", fee)
 	tx := types.NewTransaction(nonce, *recipient, amount, params.TxGas, gasPrice, nil)
