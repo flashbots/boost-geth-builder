@@ -1121,21 +1121,25 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment, validatorC
 		if profit.Sign() == 1 {
 			tx, err := w.createProposerPayoutTx(env, validatorCoinbase, profit)
 			if err != nil {
-				log.Error("Proposer payout create tx failed, validator payment skipped", "err", err)
+				log.Error("Proposer payout create tx failed", "err", err)
+				return fmt.Errorf("proposer payout create tx failed - %v", err)
 			}
 			if tx != nil {
 				log.Info("Proposer payout create tx succeeded, proceeding to commit tx")
 				env.state.Prepare(tx.Hash(), env.tcount)
 				_, err = w.commitTransaction(env, tx)
 				if err != nil {
-					log.Error("Proposer payout commit tx failed, validator payment skipped", "hash", tx.Hash().String(), "err", err)
-				} else {
-					log.Info("Proposer payout commit tx succeeded", "hash", tx.Hash().String())
+					log.Error("Proposer payout commit tx failed", "hash", tx.Hash().String(), "err", err)
+					return fmt.Errorf("proposer payout commit tx failed - %v", err)
 				}
+				log.Info("Proposer payout commit tx succeeded", "hash", tx.Hash().String())
 				env.tcount++
+			} else {
+				return errors.New("proposer payout create tx failed due to tx is nil")
 			}
 		} else {
-			log.Warn("Not enough balance, validator payment skipped", "profit", profit.String())
+			log.Warn("Proposer payout create tx failed due to not enough balance", "profit", profit.String())
+			return errors.New("proposer payout create tx failed due to not enough balance")
 		}
 
 	}
