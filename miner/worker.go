@@ -1177,7 +1177,7 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 	if len(work.txs) == 0 {
 		return nil, errors.New("no proposer payment tx")
 	} else if len(work.receipts) == 0 {
-		return nil, errors.New("No proposer payment receipt")
+		return nil, errors.New("no proposer payment receipt")
 	}
 
 	lastTx := work.txs[len(work.txs)-1]
