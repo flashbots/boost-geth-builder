@@ -1189,7 +1189,7 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 	lastTxTo := lastTx.To()
 	if lastTxTo == nil || *lastTxTo != validatorCoinbase {
 		log.Error("last transaction is not to the proposer!", "err", err, "lastTx", lastTx)
-		return nil, errors.New("last transaction is not proposer payment!")
+		return nil, errors.New("last transaction is not proposer payment")
 	}
 
 	block.Profit.Set(lastTx.Value())
