@@ -1184,7 +1184,7 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 	receipt := work.receipts[len(work.receipts)-1]
 	if receipt.TxHash != lastTx.Hash() || receipt.Status != types.ReceiptStatusSuccessful {
 		log.Error("proposer payment not successful!", "lastTx", lastTx, "receipt", receipt)
-		return nil, errors.New("last transaction is not proposer payment!")
+		return nil, errors.New("last transaction is not proposer payment")
 	}
 	lastTxTo := lastTx.To()
 	if lastTxTo == nil || *lastTxTo != validatorCoinbase {
