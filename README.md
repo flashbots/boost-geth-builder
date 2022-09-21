@@ -4,7 +4,7 @@
 
 Builder API implementing [builder spec](https://github.com/ethereum/builder-specs), making geth into a standalone block builder. 
 
-Run on your favorite network, including Kiln and local devnet.
+Run on your favorite network, including Goerli and local devnet.
 
 Requires forkchoice update to be sent for block building, on public testnets run beacon node modified to send forkchoice update on every slot [example modified beacon client (lighthouse)](https://github.com/flashbots/lighthouse)
 
@@ -39,9 +39,9 @@ BUILDER API OPTIONS:
   --builder.secret_key value               Builder key used for signing blocks (default: "0x2fc12ae741f29701f8e30f5de6350766c020cb80768a0ff01e6838ffd2431e11") [$BUILDER_SECRET_KEY]
   --builder.relay_secret_key value         Builder local relay API key used for signing headers (default: "0x2fc12ae741f29701f8e30f5de6350766c020cb80768a0ff01e6838ffd2431e11") [$BUILDER_RELAY_SECRET_KEY]
   --builder.listen_addr value              Listening address for builder endpoint (default: ":28545") [$BUILDER_LISTEN_ADDR]
-  --builder.genesis_fork_version value     Genesis fork version. For kiln use 0x70000069 (default: "0x00000000") [$BUILDER_GENESIS_FORK_VERSION]
-  --builder.bellatrix_fork_version value   Bellatrix fork version. For kiln use 0x70000071 (default: "0x02000000") [$BUILDER_BELLATRIX_FORK_VERSION]
-  --builder.genesis_validators_root value  Genesis validators root of the network. For kiln use 0x99b09fcd43e5905236c370f184056bec6e6638cfc31a323b304fc4aa789cb4ad (default: "0x0000000000000000000000000000000000000000000000000000000000000000") [$BUILDER_GENESIS_VALIDATORS_ROOT]
+  --builder.genesis_fork_version value     Genesis fork version. For Goerli use 0x00001020 (default: "0x00000000") [$BUILDER_GENESIS_FORK_VERSION]
+  --builder.bellatrix_fork_version value   Bellatrix fork version. For Goerli use 0x02000000 (default: "0x02000000") [$BUILDER_BELLATRIX_FORK_VERSION]
+  --builder.genesis_validators_root value  Genesis validators root of the network. For Goerli use 0x043db0d9a83813551ee2f33450d23797757d430911a9320530ad8a0eabc43efb (default: "0x0000000000000000000000000000000000000000000000000000000000000000") [$BUILDER_GENESIS_VALIDATORS_ROOT]
   --builder.beacon_endpoint value          Beacon endpoint to connect to for beacon chain data (default: "http://127.0.0.1:5052") [$BUILDER_BEACON_ENDPOINT]
   --builder.remote_relay_endpoint value    Relay endpoint to connect to for validator registration data, if not provided will expose validator registration locally [$BUILDER_REMOTE_RELAY_ENDPOINT]
 ```
