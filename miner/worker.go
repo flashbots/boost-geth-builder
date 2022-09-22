@@ -81,7 +81,7 @@ const (
 	// staleThreshold is the maximum depth of the acceptable stale block.
 	staleThreshold = 7
 
-	paymentTxGas = 25000
+	paymentTxGas = 26000
 )
 
 var (
