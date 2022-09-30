@@ -1176,26 +1176,28 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 		return block, nil
 	}
 
-	if len(work.txs) == 0 {
-		return nil, errors.New("no proposer payment tx")
-	} else if len(work.receipts) == 0 {
-		return nil, errors.New("no proposer payment receipt")
+	if !params.noTxs {
+		if len(work.txs) == 0 {
+			return nil, errors.New("no proposer payment tx")
+		} else if len(work.receipts) == 0 {
+			return nil, errors.New("no proposer payment receipt")
+		}
+	
+		lastTx := work.txs[len(work.txs)-1]
+		receipt := work.receipts[len(work.receipts)-1]
+		if receipt.TxHash != lastTx.Hash() || receipt.Status != types.ReceiptStatusSuccessful {
+			log.Error("proposer payment not successful!", "lastTx", lastTx, "receipt", receipt)
+			return nil, errors.New("last transaction is not proposer payment")
+		}
+		lastTxTo := lastTx.To()
+		if lastTxTo == nil || *lastTxTo != validatorCoinbase {
+			log.Error("last transaction is not to the proposer!", "err", err, "lastTx", lastTx)
+			return nil, errors.New("last transaction is not proposer payment")
+		}
+	
+		block.Profit.Set(lastTx.Value())
+		log.Info("Block finalized and assembled", "blockProfit", block.Profit.String(), "proposer payment tx", lastTx, "receipt", receipt)
 	}
-
-	lastTx := work.txs[len(work.txs)-1]
-	receipt := work.receipts[len(work.receipts)-1]
-	if receipt.TxHash != lastTx.Hash() || receipt.Status != types.ReceiptStatusSuccessful {
-		log.Error("proposer payment not successful!", "lastTx", lastTx, "receipt", receipt)
-		return nil, errors.New("last transaction is not proposer payment")
-	}
-	lastTxTo := lastTx.To()
-	if lastTxTo == nil || *lastTxTo != validatorCoinbase {
-		log.Error("last transaction is not to the proposer!", "err", err, "lastTx", lastTx)
-		return nil, errors.New("last transaction is not proposer payment")
-	}
-
-	block.Profit.Set(lastTx.Value())
-	log.Info("Block finalized and assembled", "blockProfit", block.Profit.String(), "proposer payment tx", lastTx, "receipt", receipt)
 	return block, nil
 }
 
