@@ -1176,6 +1176,10 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 		return block, nil
 	}
 
+	if params.noTxs {
+		return block, nil
+	}
+
 	if len(work.txs) == 0 {
 		return nil, errors.New("no proposer payment tx")
 	} else if len(work.receipts) == 0 {
@@ -1196,6 +1200,7 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 
 	block.Profit.Set(lastTx.Value())
 	log.Info("Block finalized and assembled", "blockProfit", block.Profit.String(), "proposer payment tx", lastTx, "receipt", receipt)
+
 	return block, nil
 }
 
