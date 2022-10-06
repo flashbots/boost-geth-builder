@@ -44,15 +44,15 @@ $ geth --help
           Beacon endpoint to connect to for beacon chain data [$BUILDER_BEACON_ENDPOINT]
    
     --builder.bellatrix_fork_version value (default: "0x02000000")
-          Bellatrix fork version. For kiln use 0x70000071
+          Bellatrix fork version. For goerli use 0x02001020
           [$BUILDER_BELLATRIX_FORK_VERSION]
    
     --builder.genesis_fork_version value (default: "0x00000000")
-          Gensis fork version. For kiln use 0x70000069 [$BUILDER_GENESIS_FORK_VERSION]
+          Gensis fork version. For goerli use 0x00001020 [$BUILDER_GENESIS_FORK_VERSION]
    
     --builder.genesis_validators_root value (default: "0x0000000000000000000000000000000000000000000000000000000000000000")
-          Genesis validators root of the network. For kiln use
-          0x99b09fcd43e5905236c370f184056bec6e6638cfc31a323b304fc4aa789cb4ad
+          Genesis validators root of the network. For goerli use
+          0x043db0d9a83813551ee2f33450d23797757d430911a9320530ad8a0eabc43efb
           [$BUILDER_GENESIS_VALIDATORS_ROOT]
    
     --builder.listen_addr value    (default: ":28545")
