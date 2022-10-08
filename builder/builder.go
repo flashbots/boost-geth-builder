@@ -74,10 +74,15 @@ func (b *Builder) onSealedBlock(executableData *beacon.ExecutableDataV1, block *
 	}
 
 	value := new(boostTypes.U256Str)
-	err = value.FromBig(block.Profit)
-	if err != nil {
-		log.Error("could not set block value", "err", err)
-		return err
+	if block.Profit.Sign() == 1 {
+		err = value.FromBig(block.Profit)
+		if err != nil {
+			log.Error("could not set block value", "err", err)
+			return err
+		}
+	} else {
+		log.Error("block value not > 0")
+		return errors.New("block value not > 0")
 	}
 
 	blockBidMsg := boostTypes.BidTrace{
