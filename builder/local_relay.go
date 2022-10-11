@@ -170,7 +170,7 @@ func (r *LocalRelay) handleRegisterValidator(w http.ResponseWriter, req *http.Re
 }
 
 func (r *LocalRelay) GetValidatorForSlot(nextSlot uint64) (ValidatorData, error) {
-	pubkeyHex, err := r.beaconClient.getProposerForNextSlot(nextSlot)
+	pubkeyHex, err := r.beaconClient.getProposerForSlot(nextSlot)
 	if err != nil {
 		return ValidatorData{}, err
 	}
@@ -196,7 +196,7 @@ func (r *LocalRelay) handleGetHeader(w http.ResponseWriter, req *http.Request) {
 	pubkeyHex := PubkeyHex(strings.ToLower(vars["pubkey"]))
 
 	// Do not validate slot separately, it will create a race between slot update and proposer key
-	if nextSlotProposer, err := r.beaconClient.getProposerForNextSlot(uint64(slot)); err != nil || nextSlotProposer != pubkeyHex {
+	if nextSlotProposer, err := r.beaconClient.getProposerForSlot(uint64(slot)); err != nil || nextSlotProposer != pubkeyHex {
 		log.Error("getHeader requested for public key other than next slots proposer", "requested", pubkeyHex, "expected", nextSlotProposer)
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -259,7 +259,7 @@ func (r *LocalRelay) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	nextSlotProposerPubkeyHex, err := r.beaconClient.getProposerForNextSlot(payload.Message.Slot)
+	nextSlotProposerPubkeyHex, err := r.beaconClient.getProposerForSlot(payload.Message.Slot)
 	if err != nil {
 		if r.enableBeaconChecks {
 			respondError(w, http.StatusBadRequest, "unknown validator")

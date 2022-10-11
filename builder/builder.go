@@ -25,8 +25,7 @@ type ValidatorData struct {
 
 type IBeaconClient interface {
 	isValidator(pubkey PubkeyHex) bool
-	getProposerForNextSlot(requestedSlot uint64) (PubkeyHex, error)
-	onForkchoiceUpdate() (uint64, error)
+	getProposerForSlot(requestedSlot uint64) (PubkeyHex, error)
 }
 
 type IRelay interface {
