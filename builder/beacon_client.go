@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -22,21 +21,16 @@ type testBeaconClient struct {
 func (b *testBeaconClient) isValidator(pubkey PubkeyHex) bool {
 	return true
 }
-func (b *testBeaconClient) getProposerForNextSlot(requestedSlot uint64) (PubkeyHex, error) {
+func (b *testBeaconClient) getProposerForSlot(requestedSlot uint64) (PubkeyHex, error) {
 	return PubkeyHex(hexutil.Encode(b.validator.Pk)), nil
-}
-func (b *testBeaconClient) onForkchoiceUpdate() (uint64, error) {
-	return b.slot, nil
 }
 
 type BeaconClient struct {
 	endpoint string
 
-	mu               sync.Mutex
-	currentEpoch     uint64
-	currentSlot      uint64
-	nextSlotProposer PubkeyHex
-	slotProposerMap  map[uint64]PubkeyHex
+	mu              sync.Mutex
+	currentEpoch    uint64
+	slotProposerMap map[uint64]PubkeyHex
 }
 
 func NewBeaconClient(endpoint string) *BeaconClient {
@@ -50,86 +44,27 @@ func (b *BeaconClient) isValidator(pubkey PubkeyHex) bool {
 	return true
 }
 
-func (b *BeaconClient) getProposerForNextSlot(requestedSlot uint64) (PubkeyHex, error) {
-	/* Only returns proposer if requestedSlot is currentSlot + 1, would be a race otherwise */
+func (b *BeaconClient) getProposerForSlot(requestedSlot uint64) (PubkeyHex, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.currentSlot+1 != requestedSlot {
-		return PubkeyHex(""), errors.New("slot out of sync")
-	}
-	return b.nextSlotProposer, nil
-}
-
-/* Returns next slot's proposer pubkey */
-// TODO: what happens if no block for previous slot - should still get next slot
-func (b *BeaconClient) onForkchoiceUpdate() (uint64, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	currentSlot, err := fetchCurrentSlot(b.endpoint)
-	if err != nil {
-		return 0, err
-	}
-
-	nextSlot := currentSlot + 1
-
-	b.currentSlot = currentSlot
-	nextSlotEpoch := nextSlot / 32
-
-	if nextSlotEpoch != b.currentEpoch {
-		// TODO: this should be prepared in advance, possibly just fetch for next epoch in advance
-		slotProposerMap, err := fetchEpochProposersMap(b.endpoint, nextSlotEpoch)
+	requestedEpoch := requestedSlot / 32
+	if requestedEpoch != b.currentEpoch {
+		slotProposerMap, err := fetchEpochProposersMap(b.endpoint, requestedEpoch)
 		if err != nil {
-			return 0, err
+			return PubkeyHex(""), err
 		}
 
-		b.currentEpoch = nextSlotEpoch
+		b.currentEpoch = requestedEpoch
 		b.slotProposerMap = slotProposerMap
 	}
 
-	nextSlotProposer, found := b.slotProposerMap[nextSlot]
+	nextSlotProposer, found := b.slotProposerMap[requestedSlot]
 	if !found {
-		log.Error("inconsistent proposer mapping", "currentSlot", currentSlot, "slotProposerMap", b.slotProposerMap)
-		return 0, errors.New("inconsistent proposer mapping")
-	}
-	b.nextSlotProposer = nextSlotProposer
-	return nextSlot, nil
-}
-
-func fetchCurrentSlot(endpoint string) (uint64, error) {
-	headerRes := &struct {
-		Data []struct {
-			Root      common.Hash `json:"root"`
-			Canonical bool        `json:"canonical"`
-			Header    struct {
-				Message struct {
-					Slot          string      `json:"slot"`
-					ProposerIndex string      `json:"proposer_index"`
-					ParentRoot    common.Hash `json:"parent_root"`
-					StateRoot     common.Hash `json:"state_root"`
-					BodyRoot      common.Hash `json:"body_root"`
-				} `json:"message"`
-				Signature hexutil.Bytes `json:"signature"`
-			} `json:"header"`
-		} `json:"data"`
-	}{}
-
-	err := fetchBeacon(endpoint+"/eth/v1/beacon/headers", headerRes)
-	if err != nil {
-		return uint64(0), err
+		return PubkeyHex(""), errors.New("no validator for requested slot")
 	}
 
-	if len(headerRes.Data) != 1 {
-		return uint64(0), errors.New("invalid response")
-	}
-
-	slot, err := strconv.Atoi(headerRes.Data[0].Header.Message.Slot)
-	if err != nil {
-		log.Error("could not parse slot", "Slot", headerRes.Data[0].Header.Message.Slot, "err", err)
-		return uint64(0), errors.New("invalid response")
-	}
-	return uint64(slot), nil
+	return nextSlotProposer, nil
 }
 
 func fetchEpochProposersMap(endpoint string, epoch uint64) (map[uint64]PubkeyHex, error) {

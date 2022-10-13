@@ -36,18 +36,18 @@ func newMockBeaconNode() *mockBeaconNode {
 		vars := mux.Vars(r)
 		epochStr, ok := vars["epoch"]
 		if !ok {
-			http.Error(w, `{ "code": 400, "message": "Invalid epoch" }`, 400)
+			http.Error(w, `{ "code": 400, "message": "invalid epoch" }`, 400)
 			return
 		}
 		epoch, err := strconv.Atoi(epochStr)
 		if err != nil {
-			http.Error(w, `{ "code": 400, "message": "Invalid epoch" }`, 400)
+			http.Error(w, `{ "code": 400, "message": "epoch not a number" }`, 400)
 			return
 		}
 
 		resp, found := mbn.proposerDuties[epoch]
 		if !found {
-			http.Error(w, `{ "code": 400, "message": "Invalid epoch" }`, 400)
+			http.Error(w, `{ "code": 400, "message": "epoch not found" }`, 400)
 			return
 		}
 
@@ -101,52 +101,6 @@ func TestFetchBeacon(t *testing.T) {
 	require.EqualError(t, err, "Invalid call")
 }
 
-func TestFetchCurrentSlot(t *testing.T) {
-	mbn := newMockBeaconNode()
-	defer mbn.srv.Close()
-
-	mbn.headersResp = []byte(`{
-  "execution_optimistic": false,
-  "data": [
-    {
-      "root": "0xcf8e0d4e9587369b2301d0790347320302cc0943d5a1884560367e8208d920f2",
-      "canonical": true,
-      "header": {
-        "message": {
-          "slot": "101",
-          "proposer_index": "1",
-          "parent_root": "0xcf8e0d4e9587369b2301d0790347320302cc0943d5a1884560367e8208d920f2",
-          "state_root": "0xcf8e0d4e9587369b2301d0790347320302cc0943d5a1884560367e8208d920f2",
-          "body_root": "0xcf8e0d4e9587369b2301d0790347320302cc0943d5a1884560367e8208d920f2"
-        },
-        "signature": "0x1b66ac1fb663c9bc59509846d6ec05345bd908eda73e670af888da41af171505cc411d61252fb6cb3fa0017b679f8bb2305b26a285fa2737f175668d0dff91cc1b66ac1fb663c9bc59509846d6ec05345bd908eda73e670af888da41af171505"
-      }
-    }
-  ]
-}`)
-
-	slot, err := fetchCurrentSlot(mbn.srv.URL)
-	require.NoError(t, err)
-	require.Equal(t, uint64(101), slot)
-
-	mbn.headersResp = []byte(`{
-  "execution_optimistic": false,
-  "data": [
-    {
-      "header": {
-        "message": {
-          "slot": "xxx"
-        }
-      }
-    }
-  ]
-}`)
-
-	slot, err = fetchCurrentSlot(mbn.srv.URL)
-	require.EqualError(t, err, "invalid response")
-	require.Equal(t, uint64(0), slot)
-}
-
 func TestFetchEpochProposersMap(t *testing.T) {
 	mbn := newMockBeaconNode()
 	defer mbn.srv.Close()
@@ -175,7 +129,7 @@ func TestFetchEpochProposersMap(t *testing.T) {
 	require.Equal(t, PubkeyHex("0x93247f2209abcacf57b75a51dafae777f9dd38bc7053d1af526f220a7489a6d3a2753e5f3e8b1cfe39b56f43611df74b"), proposersMap[2])
 }
 
-func TestOnForkchoiceUpdate(t *testing.T) {
+func TestGetProposerForSlot(t *testing.T) {
 	mbn := newMockBeaconNode()
 	defer mbn.srv.Close()
 
@@ -204,26 +158,20 @@ func TestOnForkchoiceUpdate(t *testing.T) {
 }`)
 
 	bc := NewBeaconClient(mbn.srv.URL)
-	slot, err := bc.onForkchoiceUpdate()
-	require.NoError(t, err)
-	require.Equal(t, slot, uint64(32))
-
-	pubkeyHex, err := bc.getProposerForNextSlot(32)
+	pubkeyHex, err := bc.getProposerForSlot(32)
 	require.NoError(t, err)
 	require.Equal(t, PubkeyHex("0x93247f2209abcacf57b75a51dafae777f9dd38bc7053d1af526f220a7489a6d3a2753e5f3e8b1cfe39b56f43611df74b"), pubkeyHex)
 
-	_, err = bc.getProposerForNextSlot(31)
-	require.EqualError(t, err, "slot out of sync")
+	_, err = bc.getProposerForSlot(31)
+	require.EqualError(t, err, "epoch not found")
 
-	_, err = bc.getProposerForNextSlot(33)
-	require.EqualError(t, err, "slot out of sync")
+	pubkeyHex, err = bc.getProposerForSlot(33)
+
+	require.NoError(t, err)
+	require.Equal(t, PubkeyHex("0x93247f2209abcacf57b75a51dafae777f9dd38bc7053d1af526f220a7489a6d3a2753e5f3e8b1cfe39b56f43611df74c"), pubkeyHex)
 
 	mbn.headersCode = 404
 	mbn.headersResp = []byte(`{ "code": 404, "message": "State not found" }`)
-
-	slot, err = NewBeaconClient(mbn.srv.URL).onForkchoiceUpdate()
-	require.EqualError(t, err, "State not found")
-	require.Equal(t, slot, uint64(0))
 
 	// Check that client does not fetch new proposers if epoch did not change
 	mbn.headersCode = 200
@@ -238,10 +186,6 @@ func TestOnForkchoiceUpdate(t *testing.T) {
   ]
 }`)
 
-	slot, err = bc.onForkchoiceUpdate()
-	require.NoError(t, err, "")
-	require.Equal(t, slot, uint64(32))
-
 	mbn.headersResp = []byte(`{ "data": [ { "header": { "message": { "slot": "63", "proposer_index": "1" } } } ] }`)
 	mbn.proposerDuties[2] = []byte(`{
   "data": [
@@ -253,16 +197,12 @@ func TestOnForkchoiceUpdate(t *testing.T) {
   ]
 }`)
 
-	slot, err = bc.onForkchoiceUpdate()
-	require.NoError(t, err, "")
-	require.Equal(t, slot, uint64(64))
-
-	pubkeyHex, err = bc.getProposerForNextSlot(64)
+	pubkeyHex, err = bc.getProposerForSlot(64)
 	require.NoError(t, err)
 	require.Equal(t, PubkeyHex("0x93247f2209abcacf57b75a51dafae777f9dd38bc7053d1af526f220a7489a6d3a2753e5f3e8b1cfe39b56f43611df74d"), pubkeyHex)
 
 	// Check proposers map error is routed out
 	mbn.headersResp = []byte(`{ "data": [ { "header": { "message": { "slot": "65", "proposer_index": "1" } } } ] }`)
-	_, err = bc.onForkchoiceUpdate()
-	require.EqualError(t, err, "inconsistent proposer mapping")
+	_, err = bc.getProposerForSlot(65)
+	require.EqualError(t, err, "no validator for requested slot")
 }
