@@ -41,7 +41,7 @@ func NewEthereumService(eth *eth.Ethereum) *EthereumService {
 func (s *EthereumService) BuildBlock(attrs *BuilderPayloadAttributes) (*beacon.ExecutableDataV1, *types.Block) {
 	// Send a request to generate a full block in the background.
 	// The result can be obtained via the returned channel.
-	resCh, err := s.eth.Miner().GetSealingBlockAsync(attrs.HeadHash, uint64(attrs.Timestamp), attrs.SuggestedFeeRecipient, attrs.GasLimit, attrs.Random, false)
+	resCh, err := s.eth.Miner().GetSealingBlockAsync(attrs.HeadHash, uint64(time.Now().Unix()), attrs.SuggestedFeeRecipient, attrs.GasLimit, attrs.Random, false)
 	if err != nil {
 		log.Error("Failed to create async sealing payload", "err", err)
 		return nil, nil
